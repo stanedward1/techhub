@@ -1,0 +1,380 @@
+/* ========================================
+   TechHub 全局样式系统
+   统一色彩 · 间距 · 阴影 · 排版 · 响应式
+   ======================================== */
+
+/* -------- 色彩令牌 -------- */
+:root {
+  /* 品牌色 */
+  --brand: #2563eb;
+  --brand-light: #3b82f6;
+  --brand-lighter: #dbeafe;
+  --brand-dark: #1d4ed8;
+
+  /* Element Plus 主色覆盖 */
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #5b8af0;
+  --el-color-primary-light-5: #8cacf5;
+  --el-color-primary-light-7: #bdcdfa;
+  --el-color-primary-light-9: #eef2ff;
+  --el-color-primary-dark-2: #1e4fc4;
+
+  /* 中性色 */
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --text-tertiary: #9ca3af;
+  --text-placeholder: #c4c4cd;
+
+  /* 背景色 */
+  --bg-page: #f5f7fb;
+  --bg-card: #ffffff;
+  --bg-sidebar: #111827;
+  --bg-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --bg-sidebar-active: #2563eb;
+
+  /* 边框 */
+  --border-light: #eef1f6;
+  --border-default: #e5e7eb;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 4px 6px rgba(15, 23, 42, 0.06), 0 2px 4px rgba(15, 23, 42, 0.04);
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06);
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* 间距 */
+  --gap-xs: 6px;
+  --gap-sm: 12px;
+  --gap-md: 16px;
+  --gap-lg: 20px;
+  --gap-xl: 24px;
+
+  /* 过渡 */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+}
+
+/* -------- 全局重置 -------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* -------- 通用页面卡片 -------- */
+.page-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  padding: var(--gap-lg);
+  box-shadow: var(--shadow-card);
+  margin-bottom: var(--gap-md);
+}
+
+.page-card:last-child {
+  margin-bottom: 0;
+}
+
+/* -------- 页面标题 -------- */
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 4px;
+  letter-spacing: -0.01em;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin: 0 0 16px;
+}
+
+/* -------- 工具栏 -------- */
+.toolbar {
+  display: flex;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--gap-md);
+  align-items: center;
+}
+
+.toolbar .spacer {
+  flex: 1;
+}
+
+/* -------- 卡片内标题 -------- */
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 12px;
+}
+
+/* -------- 空状态 -------- */
+.empty-state {
+  text-align: center;
+  color: var(--text-tertiary);
+  padding: 48px 20px;
+  font-size: 14px;
+}
+
+/* -------- Markdown 渲染样式 -------- */
+.md-body {
+  line-height: 1.75;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 20px 0 10px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.md-body h1 { font-size: 1.5em; }
+.md-body h2 { font-size: 1.3em; }
+.md-body h3 { font-size: 1.15em; }
+
+.md-body p {
+  margin: 8px 0;
+}
+
+.md-body ul,
+.md-body ol {
+  padding-left: 22px;
+  margin: 8px 0;
+}
+
+.md-body li {
+  margin: 4px 0;
+}
+
+.md-body a {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+.md-body a:hover {
+  text-decoration: underline;
+}
+
+.md-body pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 12px 0;
+}
+
+.md-body code {
+  background: #eef2ff;
+  color: #4338ca;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.md-body pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+
+.md-body img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+  margin: 8px 0;
+}
+
+.md-body blockquote {
+  border-left: 3px solid #c7d2fe;
+  margin: 12px 0;
+  padding: 6px 16px;
+  color: var(--text-secondary);
+  background: #f8fafc;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.md-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+}
+
+.md-body th,
+.md-body td {
+  border: 1px solid var(--border-default);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.md-body th {
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--border-light);
+  margin: 20px 0;
+}
+
+/* -------- Element Plus 全局覆盖 -------- */
+/* 表格 */
+.el-table {
+  --el-table-border-color: var(--border-light);
+  --el-table-header-bg-color: #f8fafc;
+  --el-table-row-hover-bg-color: #f8fafc;
+  font-size: 13px;
+}
+
+.el-table th.el-table__cell {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* 按钮 */
+.el-button--primary {
+  --el-button-bg-color: var(--brand);
+  --el-button-border-color: var(--brand);
+  --el-button-hover-bg-color: var(--brand-light);
+  --el-button-hover-border-color: var(--brand-light);
+  --el-button-active-bg-color: var(--brand-dark);
+}
+
+/* 分页 */
+.el-pagination {
+  --el-pagination-font-size: 13px;
+}
+
+/* 对话框 */
+.el-dialog {
+  --el-dialog-border-radius: var(--radius-lg);
+  --el-dialog-padding-primary: 20px;
+}
+
+.el-dialog__header {
+  padding: 20px 20px 0;
+}
+
+.el-dialog__title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* 标签 */
+.el-tag {
+  --el-tag-border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+
+/* 输入框 */
+.el-input__wrapper,
+.el-select .el-input__wrapper {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border-default) inset;
+}
+
+.el-input__wrapper:hover,
+.el-select:hover .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--brand-light) inset;
+}
+
+/* 下拉菜单 */
+.el-dropdown-menu {
+  border-radius: var(--radius-md);
+  padding: 4px;
+  box-shadow: var(--shadow-lg);
+}
+
+.el-dropdown-menu__item {
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+/* 弹出框 */
+.el-popper {
+  border-radius: var(--radius-md);
+}
+
+/* 消息提示 */
+.el-message {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+/* -------- 响应式工具 -------- */
+@media (max-width: 768px) {
+  .page-card {
+    padding: var(--gap-sm);
+    border-radius: var(--radius-md);
+  }
+
+  .toolbar {
+    gap: 8px;
+  }
+}
+
+/* -------- 滚动条美化 -------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* -------- 打印隐藏 -------- */
+@media print {
+  .toolbar,
+  .el-pagination,
+  .el-aside,
+  .el-header {
+    display: none !important;
+  }
+}

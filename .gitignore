@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.db
+*.db-shm
+*.db-wal
+.env
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+*.log
+vite.config.js.timestamp-*.mjs
+
+# 上传文件
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+.DS_Store

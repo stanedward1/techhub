@@ -1,0 +1,62 @@
+from app.models.user import User
+from app.models.school import School, Classroom, Student
+from app.models.homework import Assignment, Submission, ExcellentWork, WorkComment
+from app.models.workbench import (
+    Score,
+    Leave,
+    Point,
+    Communication,
+    Resource,
+    Exam,
+    Seat,
+    Setting,
+    ImportHistory,
+    StudentProfileTag,
+    WeeklyReport,
+    StudentBoardHistory,
+)
+from app.models.classlog import (
+    WorkLog,
+    ClassPlan,
+    TeacherPlan,
+    Schedule,
+    Activity,
+    Talk,
+    ReturnRecord,
+    Performance,
+    StudentComment,
+)
+from app.models.operation_log import OperationLog
+
+__all__ = [
+    "User",
+    "School",
+    "Classroom",
+    "Student",
+    "Assignment",
+    "Submission",
+    "ExcellentWork",
+    "WorkComment",
+    "Score",
+    "Leave",
+    "Point",
+    "Communication",
+    "Resource",
+    "Exam",
+    "Seat",
+    "Setting",
+    "ImportHistory",
+    "StudentProfileTag",
+    "WeeklyReport",
+    "StudentBoardHistory",
+    "WorkLog",
+    "ClassPlan",
+    "TeacherPlan",
+    "Schedule",
+    "Activity",
+    "Talk",
+    "ReturnRecord",
+    "Performance",
+    "StudentComment",
+    "OperationLog",
+]

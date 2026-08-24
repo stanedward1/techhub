@@ -1,0 +1,359 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.deps import require_teacher
+from app.models import (
+    Activity,
+    ClassPlan,
+    Performance,
+    Point,
+    ReturnRecord,
+    Schedule,
+    Student,
+    StudentComment,
+    Talk,
+    TeacherPlan,
+    User,
+    WorkLog,
+)
+from app.audit import attach_student, serialize_list_with_students
+from app.utils import to_dict
+
+router = APIRouter(tags=["班级日志"])
+
+dep = require_teacher
+
+
+# ---------------- 工作日志 ----------------
+@router.get("/api/work-logs")
+def list_work_logs(page: int = 1, page_size: int = 20, _=Depends(dep), db: Session = Depends(get_db)):
+    q = db.query(WorkLog)
+    total = q.count()
+    rows = q.order_by(WorkLog.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": [to_dict(x) for x in rows], "total": total}
+
+
+@router.post("/api/work-logs")
+def create_work_log(payload: dict, user=Depends(dep), db: Session = Depends(get_db)):
+    x = WorkLog(
+        teacher_id=user.id,
+        date=payload.get("date"),
+        content=payload.get("content", ""),
+    )
+    db.add(x)
+    db.commit()
+    db.refresh(x)
+    return to_dict(x)
+
+
+@router.put("/api/work-logs/{log_id}")
+def update_work_log(log_id: int, payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(WorkLog, log_id)
+    if not x:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    for f in ("date", "content"):
+        if f in payload and payload[f] is not None:
+            setattr(x, f, payload[f])
+    db.commit()
+    db.refresh(x)
+    return to_dict(x)
+
+
+@router.delete("/api/work-logs/{log_id}")
+def delete_work_log(log_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(WorkLog, log_id)
+    if x:
+        db.delete(x)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------- 班级计划 / 教师计划 ----------------
+def _plan_crud(model, prefix, router):
+    @router.get(f"/api/{prefix}")
+    def list_plans(page: int = 1, page_size: int = 20, plan_type: str = "", _=Depends(dep), db: Session = Depends(get_db)):
+        q = db.query(model)
+        if plan_type:
+            q = q.filter(model.plan_type == plan_type)
+        total = q.count()
+        rows = q.order_by(model.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        return {"items": [to_dict(x) for x in rows], "total": total}
+
+    @router.post(f"/api/{prefix}")
+    def create_plan(payload: dict, user=Depends(dep), db: Session = Depends(get_db)):
+        title = (payload.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="标题不能为空")
+        x = model(
+            teacher_id=user.id,
+            title=title,
+            plan_type=payload.get("plan_type", "计划"),
+            content=payload.get("content", ""),
+        )
+        db.add(x)
+        db.commit()
+        db.refresh(x)
+        return to_dict(x)
+
+    @router.put(f"/api/{prefix}/{{item_id}}")
+    def update_plan(item_id: int, payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+        x = db.get(model, item_id)
+        if not x:
+            raise HTTPException(status_code=404, detail="记录不存在")
+        for f in ("title", "plan_type", "content"):
+            if f in payload and payload[f] is not None:
+                setattr(x, f, payload[f])
+        db.commit()
+        db.refresh(x)
+        return to_dict(x)
+
+    @router.delete(f"/api/{prefix}/{{item_id}}")
+    def delete_plan(item_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+        x = db.get(model, item_id)
+        if x:
+            db.delete(x)
+            db.commit()
+        return {"ok": True}
+
+
+_plan_crud(ClassPlan, "class-plans", router)
+_plan_crud(TeacherPlan, "teacher-plans", router)
+
+
+# ---------------- 课程表 ----------------
+@router.get("/api/schedules")
+def list_schedules(class_id: int | None = None, _=Depends(dep), db: Session = Depends(get_db)):
+    q = db.query(Schedule)
+    if class_id:
+        q = q.filter(Schedule.class_id == class_id)
+    rows = q.order_by(Schedule.day_of_week, Schedule.period).all()
+    return {"items": [to_dict(x) for x in rows], "total": len(rows)}
+
+
+@router.post("/api/schedules")
+def create_schedule(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+    if not payload.get("class_id"):
+        raise HTTPException(status_code=400, detail="请选择班级")
+    x = Schedule(
+        class_id=payload["class_id"],
+        day_of_week=payload.get("day_of_week", 1),
+        period=payload.get("period", 1),
+        subject=payload.get("subject"),
+        teacher_name=payload.get("teacher_name"),
+    )
+    db.add(x)
+    db.commit()
+    db.refresh(x)
+    return to_dict(x)
+
+
+@router.delete("/api/schedules/{schedule_id}")
+def delete_schedule(schedule_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(Schedule, schedule_id)
+    if x:
+        db.delete(x)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------- 班级活动 ----------------
+@router.get("/api/activities")
+def list_activities(page: int = 1, page_size: int = 20, _=Depends(dep), db: Session = Depends(get_db)):
+    q = db.query(Activity)
+    total = q.count()
+    rows = q.order_by(Activity.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": [to_dict(x) for x in rows], "total": total}
+
+
+@router.post("/api/activities")
+def create_activity(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+    title = (payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="活动标题不能为空")
+    x = Activity(
+        class_id=payload.get("class_id"),
+        title=title,
+        content=payload.get("content", ""),
+        filepath=payload.get("filepath"),
+    )
+    db.add(x)
+    db.commit()
+    db.refresh(x)
+    return to_dict(x)
+
+
+@router.delete("/api/activities/{activity_id}")
+def delete_activity(activity_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(Activity, activity_id)
+    if x:
+        db.delete(x)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------- 师生谈心 ----------------
+@router.get("/api/talks")
+def list_talks(page: int = 1, page_size: int = 20, student_id: int | None = None, _=Depends(dep), db: Session = Depends(get_db)):
+    q = db.query(Talk)
+    if student_id:
+        q = q.filter(Talk.student_id == student_id)
+    total = q.count()
+    rows = q.order_by(Talk.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": serialize_list_with_students(db, rows), "total": total}
+
+
+@router.post("/api/talks")
+def create_talk(payload: dict, user=Depends(dep), db: Session = Depends(get_db)):
+    if not payload.get("student_id"):
+        raise HTTPException(status_code=400, detail="请选择学生")
+    x = Talk(student_id=payload["student_id"], teacher_id=user.id, content=payload.get("content", ""))
+    db.add(x)
+    db.commit()
+    db.refresh(x)
+    return attach_student(db, to_dict(x), x.student_id)
+
+
+@router.delete("/api/talks/{talk_id}")
+def delete_talk(talk_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(Talk, talk_id)
+    if x:
+        db.delete(x)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------- 返校记录 ----------------
+@router.get("/api/return-records")
+def list_return_records(page: int = 1, page_size: int = 20, student_id: int | None = None, _=Depends(dep), db: Session = Depends(get_db)):
+    q = db.query(ReturnRecord)
+    if student_id:
+        q = q.filter(ReturnRecord.student_id == student_id)
+    total = q.count()
+    rows = q.order_by(ReturnRecord.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": serialize_list_with_students(db, rows), "total": total}
+
+
+@router.post("/api/return-records")
+def create_return_record(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+    if not payload.get("student_id"):
+        raise HTTPException(status_code=400, detail="请选择学生")
+    x = ReturnRecord(
+        student_id=payload["student_id"],
+        return_date=payload.get("return_date"),
+        reason=payload.get("reason"),
+        note=payload.get("note"),
+    )
+    db.add(x)
+    db.commit()
+    db.refresh(x)
+    return attach_student(db, to_dict(x), x.student_id)
+
+
+@router.delete("/api/return-records/{record_id}")
+def delete_return_record(record_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(ReturnRecord, record_id)
+    if x:
+        db.delete(x)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------- 学生表现 ----------------
+@router.get("/api/performances")
+def list_performances(page: int = 1, page_size: int = 20, student_id: int | None = None, ptype: str = "", _=Depends(dep), db: Session = Depends(get_db)):
+    q = db.query(Performance)
+    if student_id:
+        q = q.filter(Performance.student_id == student_id)
+    if ptype:
+        q = q.filter(Performance.ptype == ptype)
+    total = q.count()
+    rows = q.order_by(Performance.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": serialize_list_with_students(db, rows), "total": total}
+
+
+@router.post("/api/performances")
+def create_performance(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+    if not payload.get("student_id"):
+        raise HTTPException(status_code=400, detail="请选择学生")
+    ptype = payload.get("ptype", "积极")
+    content = payload.get("content", "")
+    # 积分联动：积极默认加分、消极默认减分，可手动指定分值
+    points = payload.get("points")
+    if points is None:
+        points = 1 if ptype == "积极" else -1
+
+    x = Performance(
+        student_id=payload["student_id"],
+        ptype=ptype,
+        content=content,
+        image=payload.get("image"),
+    )
+    db.add(x)
+    db.flush()  # 取得 x.id 用于关联
+    # 自动生成积分记录，关联到该表现
+    db.add(
+        Point(
+            student_id=x.student_id,
+            points=points,
+            reason=f"{ptype}表现：{content}" if content else f"{ptype}表现",
+            performance_id=x.id,
+        )
+    )
+    db.commit()
+    db.refresh(x)
+    return attach_student(db, to_dict(x), x.student_id)
+
+
+@router.delete("/api/performances/{performance_id}")
+def delete_performance(performance_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(Performance, performance_id)
+    if x:
+        # 同步删除关联的积分记录
+        db.query(Point).filter(Point.performance_id == x.id).delete()
+        db.delete(x)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------- 学生评语 ----------------
+@router.get("/api/student-comments")
+def list_student_comments(page: int = 1, page_size: int = 20, student_id: int | None = None, _=Depends(dep), db: Session = Depends(get_db)):
+    q = db.query(StudentComment)
+    if student_id:
+        q = q.filter(StudentComment.student_id == student_id)
+    total = q.count()
+    rows = q.order_by(StudentComment.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": serialize_list_with_students(db, rows), "total": total}
+
+
+@router.post("/api/student-comments")
+def create_student_comment(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+    if not payload.get("student_id"):
+        raise HTTPException(status_code=400, detail="请选择学生")
+    x = StudentComment(student_id=payload["student_id"], content=payload.get("content", ""))
+    db.add(x)
+    db.commit()
+    db.refresh(x)
+    return attach_student(db, to_dict(x), x.student_id)
+
+
+@router.put("/api/student-comments/{comment_id}")
+def update_student_comment(comment_id: int, payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(StudentComment, comment_id)
+    if not x:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if payload.get("content") is not None:
+        x.content = payload["content"]
+    db.commit()
+    db.refresh(x)
+    return attach_student(db, to_dict(x), x.student_id)
+
+
+@router.delete("/api/student-comments/{comment_id}")
+def delete_student_comment(comment_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+    x = db.get(StudentComment, comment_id)
+    if x:
+        db.delete(x)
+        db.commit()
+    return {"ok": True}

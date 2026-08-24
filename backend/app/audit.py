@@ -1,0 +1,69 @@
+"""批量查询与操作审计辅助函数。
+
+- 批量查询：消除列表接口的 N+1 问题（一次 IN 查询，替代循环内逐条 db.get）。
+- 审计：关键写操作记录到 operation_logs 表。
+"""
+from sqlalchemy.orm import Session
+
+from app.models import OperationLog, Student, User
+from app.utils import to_dict
+
+
+def batch_student_map(db: Session, student_ids) -> dict:
+    """返回 {student_id: {"name": ..., "no": ...}}，一次查询。"""
+    ids = [i for i in (student_ids or []) if i is not None]
+    if not ids:
+        return {}
+    rows = db.query(Student).filter(Student.id.in_(ids)).all()
+    return {s.id: {"name": s.name, "no": s.student_no} for s in rows}
+
+
+def batch_user_map(db: Session, user_ids) -> dict:
+    """返回 {user_id: {"name": ..., "avatar": ...}}，一次查询。"""
+    ids = [i for i in (user_ids or []) if i is not None]
+    if not ids:
+        return {}
+    rows = db.query(User).filter(User.id.in_(ids)).all()
+    return {u.id: {"name": u.name, "avatar": u.avatar} for u in rows}
+
+
+def attach_student(db: Session, d: dict, student_id) -> dict:
+    """单个对象填充学生姓名/学号（配合 batch_student_map 使用）。"""
+    if student_id:
+        info = batch_student_map(db, [student_id]).get(student_id)
+        if info:
+            d["student_name"] = info["name"]
+            d["student_no"] = info["no"]
+    return d
+
+
+def serialize_list_with_students(db: Session, rows, id_attr: str = "student_id"):
+    """列表序列化：一次批量查询学生信息，避免 N+1。
+
+    返回 [dict, ...]，每项已含 student_name / student_no。
+    """
+    ids = [getattr(r, id_attr, None) for r in rows]
+    smap = batch_student_map(db, ids)
+    items = []
+    for r in rows:
+        d = to_dict(r)
+        sid = getattr(r, id_attr, None)
+        if sid in smap:
+            d["student_name"] = smap[sid]["name"]
+            d["student_no"] = smap[sid]["no"]
+        items.append(d)
+    return items
+
+
+def audit(db: Session, user, action: str, target: str = "", detail: str = ""):
+    """记录一条操作审计日志（不 commit，由调用方统一提交）。"""
+    db.add(
+        OperationLog(
+            user_id=user.id if user else None,
+            username=user.username if user else None,
+            role=user.role if user else None,
+            action=action,
+            target=target,
+            detail=detail,
+        )
+    )
