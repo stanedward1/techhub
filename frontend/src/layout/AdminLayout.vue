@@ -118,6 +118,7 @@
       <el-main class="main">
         <router-view />
       </el-main>
+      <footer class="footer">TechHub · code by longbiu</footer>
     </el-container>
   </el-container>
 </template>
@@ -450,5 +451,12 @@ function onCommand(cmd) {
   .user-name {
     display: none;
   }
+}
+
+.footer {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 20px;
 }
 </style>
