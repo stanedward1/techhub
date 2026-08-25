@@ -144,6 +144,87 @@ EOF
   info "后端依赖 OK"
 }
 
+# ---------- esbuild 原生二进制完整性检查 ----------
+# 背景：npm 从镜像源（npmmirror 等）安装时，optionalDependencies 的原生
+# 二进制可能未正确下载（@esbuild/linux-arm64 只有 JS 包装、缺 ELF 二进制），
+# 导致 vite/esbuild 卡死无输出。此函数检测并自动修复。
+check_esbuild_binary() {
+  cd "$FRONTEND_DIR"
+
+  # 平台包名映射：x86_64 -> @esbuild/linux-x64，arm64 -> @esbuild/linux-arm64
+  local esbuild_pkg=""
+  case "$ARCH_LABEL" in
+    x86_64) esbuild_pkg="@esbuild/linux-x64" ;;
+    arm64)  esbuild_pkg="@esbuild/linux-arm64" ;;
+    *)      info "非主流架构，跳过 esbuild 原生二进制检查"; return 0 ;;
+  esac
+
+  local pkg_dir="node_modules/$esbuild_pkg"
+  local bin_path="$pkg_dir/bin/esbuild"
+
+  # 检查二进制是否真实存在且为 ELF 可执行文件
+  local binary_ok=false
+  if [ -f "$bin_path" ]; then
+    local magic
+    magic="$(head -c 4 "$bin_path" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+    if [ "$magic" = "7f454c46" ]; then
+      binary_ok=true
+    fi
+  fi
+
+  if [ "$binary_ok" = true ]; then
+    info "esbuild 原生二进制 OK ($esbuild_pkg)"
+    return 0
+  fi
+
+  warn "esbuild 原生二进制缺失/损坏（$esbuild_pkg），尝试自动修复..."
+  local esbuild_version
+  esbuild_version="$(node -e "console.log(require('esbuild/package.json').version)" 2>/dev/null || echo "0.21.5")"
+  info "检测到 esbuild 版本: $esbuild_version"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local tgz_path="$tmp_dir/pkg.tgz"
+
+  # 从官方 npm registry 下载对应平台 + 版本的原生包（镜像源可能缺失二进制）
+  if command -v npm >/dev/null 2>&1; then
+    (cd "$tmp_dir" && npm pack "$esbuild_pkg@$esbuild_version" \
+      --registry=https://registry.npmjs.org >/dev/null 2>&1 && \
+      tar -xzf ./*.tgz) || {
+      error "下载 $esbuild_pkg@$esbuild_version 失败，请手动运行:"
+      error "  cd $FRONTEND_DIR && npm rebuild esbuild --registry=https://registry.npmjs.org"
+      rm -rf "$tmp_dir"
+      return 1
+    }
+  else
+    error "npm 不可用，无法修复 esbuild"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  # 用下载的真实 ELF 二进制覆盖缺失的包装脚本
+  if [ -f "$tmp_dir/package/bin/esbuild" ]; then
+    mkdir -p "$pkg_dir/bin"
+    cp "$tmp_dir/package/bin/esbuild" "$bin_path"
+    chmod 755 "$bin_path"
+    local magic2
+    magic2="$(head -c 4 "$bin_path" | od -An -tx1 | tr -d ' \n')"
+    if [ "$magic2" = "7f454c46" ]; then
+      info "esbuild 原生二进制修复成功: $bin_path ($(stat -c%s "$bin_path") bytes)"
+      rm -rf "$tmp_dir"
+      return 0
+    else
+      error "修复后仍非 ELF 二进制，请手动检查"
+      rm -rf "$tmp_dir"
+      return 1
+    fi
+  fi
+
+  error "下载包中未找到二进制，修复失败"
+  rm -rf "$tmp_dir"
+  return 1
+}
+
 # ---------- 前端依赖安装 ----------
 setup_frontend() {
   info "配置前端依赖..."
@@ -154,6 +235,9 @@ setup_frontend() {
     rm -rf node_modules package-lock.json
     npm install --registry=https://registry.npmmirror.com
   fi
+
+  # 检查并修复 esbuild 原生二进制（vite 启动的前提）
+  check_esbuild_binary
   info "前端依赖 OK"
 }
 

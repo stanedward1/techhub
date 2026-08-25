@@ -26,8 +26,8 @@
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="warning" @click="resetPwd(row)">重置密码</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button v-if="canResetPwd(row)" link type="warning" @click="resetPwd(row)">重置密码</el-button>
+            <el-button v-if="canRemove(row)" link type="danger" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -37,9 +37,9 @@
       <el-form label-width="80px">
         <el-form-item label="用户名" required><el-input v-model="form.username" :disabled="!!editing" /></el-form-item>
         <el-form-item v-if="!editing" label="密码"><el-input v-model="form.password" placeholder="默认 123456" /></el-form-item>
-        <el-form-item label="姓名" required><el-input v-model="form.name" /></el-form-item>
+        <el-form-item label="姓名" required><el-input v-model="form.name" :disabled="nameDisabled" /></el-form-item>
         <el-form-item label="角色">
-          <el-select v-model="form.role" style="width: 100%" :disabled="!!editing && editing.role === 'admin'">
+          <el-select v-model="form.role" style="width: 100%" :disabled="roleDisabled">
             <el-option label="管理员" value="admin" />
             <el-option label="教师" value="teacher" />
             <el-option label="学生" value="student" />
@@ -61,9 +61,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi, metaApi } from '../../api'
+import { getUser } from '../../utils/auth'
 
 const items = ref([])
 const classes = ref([])
@@ -74,6 +75,23 @@ const dialog = ref(false)
 const editing = ref(null)
 const saving = ref(false)
 const form = reactive({ username: '', password: '', name: '', role: 'teacher', phone: '', class_id: null })
+
+// 当前登录用户是否为教师（非管理员）
+const currentUser = getUser()
+const isTeacherOnly = currentUser?.role === 'teacher'
+
+// 教师不能重置其他教师/管理员的密码
+function canResetPwd(row) {
+  return !(isTeacherOnly && (row.role === 'teacher' || row.role === 'admin'))
+}
+// 教师不能删除其他教师/管理员
+function canRemove(row) {
+  return !(isTeacherOnly && (row.role === 'teacher' || row.role === 'admin'))
+}
+// 教师编辑其他教师/管理员时禁止修改角色
+const roleDisabled = computed(() => !!editing.value && isTeacherOnly && (editing.value.role === 'teacher' || editing.value.role === 'admin'))
+// 教师编辑其他教师/管理员时禁止修改姓名
+const nameDisabled = computed(() => !!editing.value && isTeacherOnly && (editing.value.role === 'teacher' || editing.value.role === 'admin'))
 
 onMounted(async () => {
   const res = await metaApi.classes()

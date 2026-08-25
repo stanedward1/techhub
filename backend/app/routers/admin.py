@@ -76,10 +76,18 @@ def create_user(payload: dict, _=Depends(admin_dep), db: Session = Depends(get_d
 
 
 @router.put("/api/admin/users/{user_id}")
-def update_user(user_id: int, payload: dict, _=Depends(admin_dep), db: Session = Depends(get_db)):
+def update_user(user_id: int, payload: dict, user=Depends(admin_dep), db: Session = Depends(get_db)):
     u = db.get(User, user_id)
     if not u:
         raise HTTPException(status_code=404, detail="用户不存在")
+    # 教师不能编辑其他教师/管理员的姓名、角色、班级归属（管理员不受限）
+    if user.role == "teacher" and u.role in ("teacher", "admin"):
+        if "name" in payload and payload["name"] is not None and payload["name"] != u.name:
+            raise HTTPException(status_code=403, detail="教师无权修改其他教师或管理员的姓名")
+        if "role" in payload and payload["role"] is not None:
+            raise HTTPException(status_code=403, detail="教师无权修改其他教师或管理员的角色")
+        if "class_id" in payload and payload["class_id"] is not None:
+            raise HTTPException(status_code=403, detail="教师无权修改其他教师或管理员的班级信息")
     for f in ("name", "phone", "role", "class_id"):
         if f in payload and payload[f] is not None:
             setattr(u, f, payload[f])
@@ -93,6 +101,9 @@ def reset_password(user_id: int, payload: dict, user=Depends(admin_dep), db: Ses
     u = db.get(User, user_id)
     if not u:
         raise HTTPException(status_code=404, detail="用户不存在")
+    # 教师不能重置其他教师/管理员的密码（只能重置学生密码；管理员可重置所有人）
+    if user.role == "teacher" and u.role in ("teacher", "admin"):
+        raise HTTPException(status_code=403, detail="教师无权重置其他教师或管理员的密码")
     new_pwd = payload.get("password") or "123456"
     u.password_hash = hash_password(new_pwd)
     audit(db, user, "reset_password", target=f"{u.username} ({u.name})")
@@ -105,6 +116,9 @@ def delete_user(user_id: int, user=Depends(admin_dep), db: Session = Depends(get
     u = db.get(User, user_id)
     if not u:
         raise HTTPException(status_code=404, detail="用户不存在")
+    # 教师不能删除其他教师/管理员
+    if user.role == "teacher" and u.role in ("teacher", "admin"):
+        raise HTTPException(status_code=403, detail="教师无权删除其他教师或管理员")
     if u.role == "admin" and db.query(User).filter(User.role == "admin").count() <= 1:
         raise HTTPException(status_code=400, detail="至少保留一个管理员账号")
     audit(db, user, "delete_user", target=f"{u.username} ({u.name})", detail=f"role={u.role}")
