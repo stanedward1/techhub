@@ -5,7 +5,7 @@
         <el-option label="登记" value="登记" />
         <el-option label="已销假" value="已销假" />
       </el-select>
-      <StudentSelect v-model="studentId" placeholder="按学生筛选" style="width: 220px" @update:model-value="load" />
+      <StudentSelect v-model="studentId" v-model:classId="classId" showClassFilter placeholder="按学生筛选" style="width: 320px" @update:model-value="load" @update:classId="load" />
       <div class="spacer"></div>
       <el-button type="primary" @click="openCreate">登记请假</el-button>
       <SortBar v-model="order" />
@@ -40,7 +40,7 @@
 
     <el-dialog v-model="dialog" :title="editing ? '编辑请假' : '登记请假'" width="460px">
       <el-form label-width="80px">
-        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" /></el-form-item>
+        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" showClassFilter /></el-form-item>
         <el-form-item label="事由"><el-input v-model="form.reason" /></el-form-item>
         <el-form-item label="开始日期"><el-date-picker v-model="form.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
         <el-form-item label="结束日期"><el-date-picker v-model="form.end_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
@@ -66,6 +66,7 @@ const { order, useSorted } = useSort('leaves')
 const items = useSorted(rawItems)
 const status = ref('')
 const studentId = ref(null)
+const classId = ref(null)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
@@ -80,7 +81,7 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    const res = await leaveApi.list({ page: page.value, page_size: pageSize, status: status.value, student_id: studentId.value })
+    const res = await leaveApi.list({ page: page.value, page_size: pageSize, status: status.value, student_id: studentId.value, class_id: classId.value })
     rawItems.value = res.items
     total.value = res.total
   } catch (e) {

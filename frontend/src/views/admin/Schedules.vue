@@ -59,7 +59,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { metaApi, scheduleApi } from '../../api'
+import { metaApi, scheduleApi, studentApi } from '../../api'
 
 const days = ['一', '二', '三', '四', '五']
 const classes = ref([])
@@ -72,7 +72,8 @@ const saving = ref(false)
 const form = reactive({ day_of_week: 1, period: 1, subject: '', teacher_name: '' })
 
 onMounted(async () => {
-  const res = await metaApi.classes()
+  // 管理员看全部，教师只看自己负责的班级
+  const res = await studentApi.classrooms()
   classes.value = res.items
 })
 

@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { isStudent, isTeacher, getToken } from '../utils/auth'
+import { isStudent, isTeacher, getToken, getUser } from '../utils/auth'
 
 const routes = [
   // ============ 学生端 ============
@@ -31,6 +31,12 @@ const routes = [
     component: () => import('../views/admin/Login.vue')
   },
   {
+    path: '/admin/change-password',
+    name: 'admin-change-password',
+    component: () => import('../views/admin/ChangePassword.vue'),
+    meta: { requiresTeacher: true }
+  },
+  {
     path: '/admin',
     component: () => import('../layout/AdminLayout.vue'),
     meta: { requiresTeacher: true },
@@ -39,6 +45,7 @@ const routes = [
       { path: 'dashboard', name: 'dashboard', component: () => import('../views/admin/Dashboard.vue') },
       { path: 'homework', name: 'admin-homework', component: () => import('../views/admin/Assignments.vue') },
       { path: 'homework/:id/submissions', name: 'admin-submissions', component: () => import('../views/admin/AssignmentSubmissions.vue') },
+      { path: 'homework/:id/submissions/:submissionId', name: 'admin-submission-detail', component: () => import('../views/admin/SubmissionDetail.vue') },
       { path: 'students', name: 'admin-students', component: () => import('../views/admin/Students.vue') },
       { path: 'students/:id/profile', name: 'admin-student-profile', component: () => import('../views/admin/StudentProfile.vue') },
       { path: 'classrooms', name: 'admin-classrooms', component: () => import('../views/admin/Classrooms.vue') },
@@ -59,6 +66,7 @@ const routes = [
       { path: 'student-comments', name: 'admin-student-comments', component: () => import('../views/admin/StudentComments.vue') },
       { path: 'reports', name: 'admin-reports', component: () => import('../views/admin/WeeklyReport.vue') },
       { path: 'users', name: 'admin-users', component: () => import('../views/admin/Users.vue') },
+      { path: 'audit-logs', name: 'admin-audit-logs', component: () => import('../views/admin/AuditLogs.vue') },
       { path: 'settings', name: 'admin-settings', component: () => import('../views/admin/Settings.vue') }
     ]
   },
@@ -79,8 +87,16 @@ router.beforeEach((to) => {
     if (!hasToken || !isTeacher()) {
       return { path: '/admin/login', query: { redirect: to.fullPath } }
     }
+    // 强制改密：未改密的用户只能访问改密页
+    if (getUser()?.must_change_password && to.path !== '/admin/change-password') {
+      return { path: '/admin/change-password', query: { first: 1 } }
+    }
   }
+  // 改密页已登录时不允许访问登录页
   if (to.path === '/admin/login' && hasToken && isTeacher()) {
+    if (getUser()?.must_change_password) {
+      return { path: '/admin/change-password', query: { first: 1 } }
+    }
     return { path: '/admin' }
   }
 

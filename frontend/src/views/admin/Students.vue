@@ -295,7 +295,8 @@ const form = reactive({
 })
 
 onMounted(async () => {
-  const res = await metaApi.classes()
+  // 管理员看全部班级，教师只看自己负责的班级
+  const res = await studentApi.classrooms()
   classes.value = res.items
   load()
 })

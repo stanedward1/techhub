@@ -25,6 +25,10 @@ export const homeworkApi = {
   updateAssignment: (id, data) => request.put(`/api/homework/assignments/${id}`, data),
   deleteAssignment: (id) => request.delete(`/api/homework/assignments/${id}`),
   submissions: (id) => request.get(`/api/homework/assignments/${id}/submissions`),
+  submissionDetail: (id) => request.get(`/api/homework/submissions/${id}`),
+  addSubmissionComment: (id, data) => request.post(`/api/homework/submissions/${id}/comments`, data),
+  deleteSubmissionComment: (submissionId, commentId) =>
+    request.delete(`/api/homework/submissions/${submissionId}/comments/${commentId}`),
   submit: (id, data) => request.post(`/api/homework/assignments/${id}/submissions`, data),
   mySubmissions: () => request.get('/api/homework/my-submissions'),
   markExcellent: (submissionId, data) =>
@@ -182,7 +186,8 @@ export const adminApi = {
   settings: () => request.get('/api/settings'),
   setSetting: (key, value) => request.put(`/api/settings/${key}`, { value }),
   upgradeGrade: () => request.post('/api/settings/upgrade-grade'),
-  dashboard: () => request.get('/api/stats/dashboard')
+  dashboard: () => request.get('/api/stats/dashboard'),
+  auditLogs: (params) => request.get('/api/admin/audit-logs', { params })
 }
 
 // ============ 文件上传 ============

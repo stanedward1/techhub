@@ -63,7 +63,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { adminApi, metaApi } from '../../api'
+import { adminApi, metaApi, studentApi } from '../../api'
 import { getUser } from '../../utils/auth'
 
 const items = ref([])
@@ -94,7 +94,7 @@ const roleDisabled = computed(() => !!editing.value && isTeacherOnly && (editing
 const nameDisabled = computed(() => !!editing.value && isTeacherOnly && (editing.value.role === 'teacher' || editing.value.role === 'admin'))
 
 onMounted(async () => {
-  const res = await metaApi.classes()
+  const res = await studentApi.classrooms()
   classes.value = res.items
   load()
 })

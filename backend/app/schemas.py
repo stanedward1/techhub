@@ -17,7 +17,8 @@ class RegisterRequest(BaseModel):
 
 class PasswordRequest(BaseModel):
     old_password: str
-    new_password: str = Field(..., min_length=6, max_length=50)
+    # 密码强度由 security.validate_password_strength 校验（至少8位+字母+数字）
+    new_password: str = Field(..., min_length=1, max_length=50)
 
 
 class UserOut(BaseModel):

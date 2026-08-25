@@ -112,7 +112,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { reportApi, metaApi } from '../../api'
+import { reportApi, metaApi, studentApi } from '../../api'
 
 const classes = ref([])
 const classId = ref(null)
@@ -143,7 +143,8 @@ const dataCards = computed(() => {
 })
 
 onMounted(async () => {
-  const res = await metaApi.classes()
+  // 管理员看全部，教师只看自己负责的班级
+  const res = await studentApi.classrooms()
   classes.value = res.items
 })
 

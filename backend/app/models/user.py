@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -16,5 +16,9 @@ class User(Base):
     avatar = Column(String(255))
     phone = Column(String(20))
     class_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    # 安全策略：首次登录强制改密 + 登录失败锁定
+    must_change_password = Column(Boolean, default=False, nullable=False)  # True=首次登录需改密
+    failed_attempts = Column(Integer, default=0, nullable=False)           # 连续失败次数
+    locked_until = Column(DateTime(timezone=True), nullable=True)           # 锁定截止时间
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

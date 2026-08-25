@@ -2,7 +2,7 @@
   <div>
     <div class="toolbar">
       <div class="spacer"></div>
-      <el-button type="primary" @click="openCreate">新增班级</el-button>
+      <el-button v-if="isAdmin" type="primary" @click="openCreate">新增班级</el-button>
     </div>
     <div class="page-card">
       <el-table :data="items" v-loading="loading" style="width: 100%">
@@ -11,7 +11,7 @@
         <el-table-column prop="major" label="专业" width="160" />
         <el-table-column prop="grade" label="年级" width="100" />
         <el-table-column prop="student_count" label="学生数" width="90" />
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column v-if="isAdmin" label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="danger" @click="remove(row)">删除</el-button>
@@ -43,7 +43,9 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { studentApi } from '../../api'
+import { getUser } from '../../utils/auth'
 
+const isAdmin = getUser()?.role === 'admin'
 const items = ref([])
 const loading = ref(false)
 const dialog = ref(false)

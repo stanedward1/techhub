@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -6,12 +8,52 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Classroom, User
 from app.schemas import LoginRequest, PasswordRequest, RegisterRequest
-from app.security import create_access_token, hash_password, verify_password
+from app.security import (
+    create_access_token,
+    hash_password,
+    validate_password_strength,
+    verify_password,
+)
 from app.utils import to_dict
 import os
 import uuid
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
+
+# 登录失败锁定策略
+MAX_FAILED_ATTEMPTS = 5
+LOCK_DURATION_MINUTES = 15
+
+
+def _check_locked(user: User):
+    """检查账号是否被锁定，若锁定则抛出 423 错误。"""
+    if user.locked_until:
+        now = datetime.now(timezone.utc)
+        lock_until = user.locked_until
+        if lock_until.tzinfo is None:
+            lock_until = lock_until.replace(tzinfo=timezone.utc)
+        if now < lock_until:
+            remain = int((lock_until - now).total_seconds() // 60) + 1
+            raise HTTPException(status_code=423, detail=f"账号已锁定，请 {remain} 分钟后再试")
+        # 锁定已过期，重置
+        user.locked_until = None
+        user.failed_attempts = 0
+
+
+def _record_failed_login(db: Session, user: User):
+    """记录一次失败登录，达到阈值则锁定。"""
+    user.failed_attempts = (user.failed_attempts or 0) + 1
+    if user.failed_attempts >= MAX_FAILED_ATTEMPTS:
+        user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCK_DURATION_MINUTES)
+        user.failed_attempts = 0
+    db.commit()
+
+
+def _reset_login_state(user: User):
+    """登录成功后重置失败计数和锁定状态。"""
+    if user.failed_attempts or user.locked_until:
+        user.failed_attempts = 0
+        user.locked_until = None
 
 
 def public_user(db: Session, user: User) -> dict:
@@ -39,14 +81,29 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             .first()
         )
         if not user or not verify_password(payload.password, user.password_hash):
+            if user:
+                _record_failed_login(db, user)
             raise HTTPException(status_code=401, detail="班级、姓名或密码错误")
     else:
         # 教师/管理员登录：用户名 + 密码
         user = db.query(User).filter(User.username == payload.username).first()
         if not user or user.role == "student" or not verify_password(payload.password, user.password_hash):
+            if user:
+                _record_failed_login(db, user)
             raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    # 锁定检查（密码正确也要检查，防止锁定期间绕过）
+    _check_locked(user)
+
+    _reset_login_state(user)
+    db.commit()
+
     token = create_access_token(subject=str(user.id), role=user.role)
-    return {"token": token, "user": public_user(db, user)}
+    return {
+        "token": token,
+        "user": public_user(db, user),
+        "must_change_password": bool(user.must_change_password),
+    }
 
 
 @router.post("/register")
@@ -95,7 +152,12 @@ def change_password(
 ):
     if not verify_password(payload.old_password, user.password_hash):
         raise HTTPException(status_code=400, detail="原密码不正确")
+    # 密码强度校验
+    err = validate_password_strength(payload.new_password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
     user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False  # 改密后清除强制改密标记
     audit(db, user, "change_password", target=user.username)
     db.commit()
     return {"ok": True}

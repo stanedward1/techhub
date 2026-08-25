@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="toolbar">
-      <StudentSelect v-model="studentId" placeholder="按学生筛选" style="width: 220px" @update:model-value="load" />
+      <StudentSelect v-model="studentId" v-model:classId="classId" showClassFilter placeholder="按学生筛选" style="width: 320px" @update:model-value="load" @update:classId="load" />
       <SortBar v-model="order" />
       <div class="spacer"></div>
       <el-button type="primary" @click="openCreate">新增返校记录</el-button>
@@ -29,7 +29,7 @@
 
     <el-dialog v-model="dialog" title="新增返校记录" width="460px">
       <el-form label-width="80px">
-        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" /></el-form-item>
+        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" showClassFilter /></el-form-item>
         <el-form-item label="返校日期"><el-date-picker v-model="form.return_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
         <el-form-item label="事由"><el-input v-model="form.reason" /></el-form-item>
         <el-form-item label="备注"><el-input v-model="form.note" type="textarea" :rows="2" /></el-form-item>
@@ -54,6 +54,7 @@ const rawItems = ref([])
 const { order, useSorted } = useSort('returnrecords')
 const items = useSorted(rawItems)
 const studentId = ref(null)
+const classId = ref(null)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
@@ -67,7 +68,7 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    const res = await returnRecordApi.list({ page: page.value, page_size: pageSize, student_id: studentId.value })
+    const res = await returnRecordApi.list({ page: page.value, page_size: pageSize, student_id: studentId.value, class_id: classId.value })
     rawItems.value = res.items
     total.value = res.total
   } catch (e) {

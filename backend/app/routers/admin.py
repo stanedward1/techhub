@@ -13,6 +13,7 @@ from app.models import (
     Communication,
     Exam,
     Leave,
+    OperationLog,
     Resource,
     Score,
     Setting,
@@ -61,6 +62,9 @@ def create_user(payload: dict, _=Depends(admin_dep), db: Session = Depends(get_d
         raise HTTPException(status_code=400, detail="角色不合法")
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=400, detail="用户名已存在")
+    # 新用户默认密码 123456 不满足强度要求时，标记首次登录强制改密
+    from app.security import validate_password_strength
+    must_change = validate_password_strength(password) is not None
     u = User(
         username=username,
         password_hash=hash_password(password),
@@ -68,6 +72,7 @@ def create_user(payload: dict, _=Depends(admin_dep), db: Session = Depends(get_d
         role=role,
         phone=payload.get("phone"),
         class_id=payload.get("class_id") if role == "student" else None,
+        must_change_password=must_change,
     )
     db.add(u)
     db.commit()
@@ -105,7 +110,12 @@ def reset_password(user_id: int, payload: dict, user=Depends(admin_dep), db: Ses
     if user.role == "teacher" and u.role in ("teacher", "admin"):
         raise HTTPException(status_code=403, detail="教师无权重置其他教师或管理员的密码")
     new_pwd = payload.get("password") or "123456"
+    # 重置密码后标记首次登录需改密（除非新密码本身满足强度要求）
+    from app.security import validate_password_strength
+    u.must_change_password = validate_password_strength(new_pwd) is not None
     u.password_hash = hash_password(new_pwd)
+    u.failed_attempts = 0
+    u.locked_until = None
     audit(db, user, "reset_password", target=f"{u.username} ({u.name})")
     db.commit()
     return {"ok": True}
@@ -163,31 +173,75 @@ def upgrade_grade(user=Depends(admin_dep), db: Session = Depends(get_db)):
     return {"upgraded": upgraded}
 
 
+# ---------------- 审计日志 ----------------（仅管理员）
+@router.get("/api/admin/audit-logs")
+def list_audit_logs(
+    action: str = "",
+    keyword: str = "",
+    page: int = 1,
+    page_size: int = 20,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查询操作审计日志（仅管理员）。"""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可查看审计日志")
+    q = db.query(OperationLog)
+    if action:
+        q = q.filter(OperationLog.action == action)
+    if keyword:
+        q = q.filter(
+            OperationLog.username.contains(keyword)
+            | OperationLog.target.contains(keyword)
+        )
+    total = q.count()
+    rows = q.order_by(OperationLog.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": [to_dict(x) for x in rows], "total": total}
+
+
 # ---------------- 看板统计 ----------------
 @router.get("/api/stats/dashboard")
-def dashboard(_=Depends(admin_dep), db: Session = Depends(get_db)):
-    student_count = db.query(Student).count()
-    class_count = db.query(Classroom).count()
+def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
+    # 教师只能查看自己负责班级的数据；管理员查看全校
+    if user.role != "admin":
+        class_ids = [c.id for c in db.query(Classroom).filter(Classroom.teacher_id == user.id).all()]
+        student_ids = []
+        if class_ids:
+            student_ids = [s.id for s in db.query(Student).filter(Student.class_id.in_(class_ids)).all()]
+    else:
+        class_ids = None
+        student_ids = None
+
+    def _count(model, id_col=None, ids=None):
+        q = db.query(model)
+        if id_col is not None and ids is not None:
+            q = q.filter(id_col.in_(ids))
+        return q.count()
+
+    student_count = db.query(Student).count() if user.role == "admin" else len(student_ids)
+    class_count = db.query(Classroom).count() if user.role == "admin" else len(class_ids)
     assignment_count = db.query(Assignment).count()
     submission_count = db.query(Submission).count()
     resource_count = db.query(Resource).count()
     exam_count = db.query(Exam).count()
-    leave_count = db.query(Leave).count()
-    comm_count = db.query(Communication).count()
+    leave_count = _count(Leave, Leave.student_id, student_ids)
+    comm_count = _count(Communication, Communication.student_id, student_ids)
 
     today = datetime.now().strftime("%Y-%m-%d")
-    today_leaves = db.query(Leave).filter(Leave.created_at >= today).count()
+    today_leaves = (
+        db.query(Leave).filter(Leave.created_at >= today, Leave.student_id.in_(student_ids)).count()
+        if student_ids is not None else db.query(Leave).filter(Leave.created_at >= today).count()
+    )
 
     # 近 7 天请假详情（含人员姓名、类型、时长）
     trend = []
     leave_details = []
     for i in range(6, -1, -1):
         day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        day_leaves = (
-            db.query(Leave)
-            .filter(Leave.start_date == day)
-            .all()
-        )
+        day_leaves_q = db.query(Leave).filter(Leave.start_date == day)
+        if student_ids is not None:
+            day_leaves_q = day_leaves_q.filter(Leave.student_id.in_(student_ids))
+        day_leaves = day_leaves_q.all()
         items = []
         for l in day_leaves:
             stu = db.get(Student, l.student_id)
@@ -210,7 +264,10 @@ def dashboard(_=Depends(admin_dep), db: Session = Depends(get_db)):
         leave_details.append({"date": day[5:], "count": len(day_leaves), "items": items})
 
     # 成绩分布（含百分比）
-    scores = [s.score for s in db.query(Score).all()]
+    score_q = db.query(Score)
+    if student_ids is not None:
+        score_q = score_q.filter(Score.student_id.in_(student_ids))
+    scores = [s.score for s in score_q.all()]
     total_scores = len(scores) if scores else 1
     dist = {
         "优秀(90+)": {"count": sum(1 for x in scores if x >= 90), "percent": round(sum(1 for x in scores if x >= 90) / total_scores * 100, 1)},
@@ -221,7 +278,10 @@ def dashboard(_=Depends(admin_dep), db: Session = Depends(get_db)):
 
     # 最近动态（请假 + 工作日志）
     recent = []
-    for l in db.query(Leave).order_by(Leave.id.desc()).limit(5).all():
+    leave_q = db.query(Leave)
+    if student_ids is not None:
+        leave_q = leave_q.filter(Leave.student_id.in_(student_ids))
+    for l in leave_q.order_by(Leave.id.desc()).limit(5).all():
         stu = db.get(Student, l.student_id)
         recent.append(
             {

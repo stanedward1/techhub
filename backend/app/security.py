@@ -17,6 +17,22 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+def validate_password_strength(password: str) -> str | None:
+    """校验密码强度，返回错误信息；通过则返回 None。
+
+    规则：至少 8 位，必须同时包含字母和数字，不能全为同一字符。
+    """
+    if len(password) < 8:
+        return "密码长度至少 8 位"
+    if not any(c.isalpha() for c in password):
+        return "密码必须包含字母"
+    if not any(c.isdigit() for c in password):
+        return "密码必须包含数字"
+    if len(set(password)) < 2:
+        return "密码不能全为相同字符"
+    return None
+
+
 def create_access_token(subject: str, role: str, expires_delta: timedelta | None = None) -> str:
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)

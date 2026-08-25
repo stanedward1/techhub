@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="toolbar">
-      <StudentSelect v-model="studentId" placeholder="按学生筛选" style="width: 220px" @update:model-value="load" />
+      <StudentSelect v-model="studentId" v-model:classId="classId" showClassFilter placeholder="按学生筛选" style="width: 320px" @update:model-value="load" @update:classId="load" />
       <SortBar v-model="order" />
       <div class="spacer"></div>
       <el-button type="primary" @click="openCreate">新增谈心记录</el-button>
@@ -28,7 +28,7 @@
 
     <el-dialog v-model="dialog" title="新增谈心记录" width="500px">
       <el-form label-width="80px">
-        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" /></el-form-item>
+        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" showClassFilter /></el-form-item>
         <el-form-item label="内容"><el-input v-model="form.content" type="textarea" :rows="4" /></el-form-item>
       </el-form>
       <template #footer>
@@ -51,6 +51,7 @@ const rawItems = ref([])
 const { order, useSorted } = useSort('talks')
 const items = useSorted(rawItems)
 const studentId = ref(null)
+const classId = ref(null)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
@@ -64,7 +65,7 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    const res = await talkApi.list({ page: page.value, page_size: pageSize, student_id: studentId.value })
+    const res = await talkApi.list({ page: page.value, page_size: pageSize, student_id: studentId.value, class_id: classId.value })
     rawItems.value = res.items
     total.value = res.total
   } catch (e) {

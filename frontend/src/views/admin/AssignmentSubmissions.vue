@@ -33,8 +33,9 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
+            <el-button link type="primary" @click="openDetail(row)">查看详情</el-button>
             <el-button v-if="!row.is_excellent" link type="success" @click="mark(row)">选为优秀</el-button>
             <el-button v-else link type="warning" @click="unmark(row)">取消优秀</el-button>
           </template>
@@ -59,12 +60,13 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import Markdown from '../../components/Markdown.vue'
 import { homeworkApi } from '../../api'
 
 const route = useRoute()
+const router = useRouter()
 const items = ref([])
 const assignment = ref(null)
 const loading = ref(true)
@@ -92,6 +94,10 @@ function mark(row) {
   dialog.value = true
 }
 
+function openDetail(row) {
+  router.push(`/admin/homework/${route.params.id}/submissions/${row.id}`)
+}
+
 async function confirmMark() {
   await homeworkApi.markExcellent(target.value.id, { note: note.value })
   ElMessage.success('已评选为优秀作品')
@@ -108,8 +114,12 @@ async function unmark(row) {
 
 <style scoped>
 .content-preview {
-  max-height: 200px;
-  overflow-y: auto;
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+  -webkit-line-clamp: 5;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
 }
 .content-preview :deep(.md-body) {
   font-size: 13px;

@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="toolbar">
-      <StudentSelect v-model="studentId" placeholder="按学生筛选" style="width: 220px" @update:model-value="load" />
+      <StudentSelect v-model="studentId" v-model:classId="classId" showClassFilter placeholder="按学生筛选" style="width: 320px" @update:model-value="load" @update:classId="load" />
       <SortBar v-model="order" />
       <div class="spacer"></div>
       <el-button type="primary" @click="openCreate">新增沟通</el-button>
@@ -34,7 +34,7 @@
 
     <el-dialog v-model="dialog" title="新增沟通记录" width="500px">
       <el-form label-width="80px">
-        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" /></el-form-item>
+        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" showClassFilter /></el-form-item>
         <el-form-item label="方式">
           <el-select v-model="form.method" style="width: 100%">
             <el-option v-for="m in ['电话', '微信', '面谈', '其他']" :key="m" :label="m" :value="m" />
@@ -63,6 +63,7 @@ const rawItems = ref([])
 const { order, useSorted } = useSort('communications')
 const items = useSorted(rawItems)
 const studentId = ref(null)
+const classId = ref(null)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
@@ -76,7 +77,7 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    const res = await communicationApi.list({ page: page.value, page_size: pageSize, student_id: studentId.value })
+    const res = await communicationApi.list({ page: page.value, page_size: pageSize, student_id: studentId.value, class_id: classId.value })
     rawItems.value = res.items
     total.value = res.total
   } catch (e) {

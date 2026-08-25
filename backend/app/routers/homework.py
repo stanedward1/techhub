@@ -10,6 +10,7 @@ from app.models import (
     Classroom,
     ExcellentWork,
     Submission,
+    SubmissionComment,
     User,
     WorkComment,
 )
@@ -167,6 +168,95 @@ def list_submissions(
         d["is_excellent"] = s.id in excellent_ids
         items.append(d)
     return {"items": items, "total": len(items)}
+
+
+@router.get("/submissions/{submission_id}")
+def get_submission(
+    submission_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """获取提交详情（含完整内容 + 教师点评列表）。"""
+    s = db.get(Submission, submission_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="提交不存在")
+    a = db.get(Assignment, s.assignment_id)
+    _check_student_access(a, user)
+    if user.role == "student" and s.student_id != user.id:
+        raise HTTPException(status_code=403, detail="无权查看该提交")
+
+    d = to_dict(s)
+    stu = db.get(User, s.student_id)
+    d["student_name"] = stu.name if stu else None
+    d["student_avatar"] = stu.avatar if stu else None
+    d["is_excellent"] = (
+        db.query(ExcellentWork).filter(ExcellentWork.submission_id == submission_id).first() is not None
+    )
+    comments = (
+        db.query(SubmissionComment)
+        .filter(SubmissionComment.submission_id == submission_id)
+        .order_by(SubmissionComment.id.asc())
+        .all()
+    )
+    comment_items = []
+    for c in comments:
+        cd = to_dict(c)
+        t = db.get(User, c.teacher_id)
+        cd["teacher_name"] = t.name if t else None
+        comment_items.append(cd)
+    d["comments"] = comment_items
+    return d
+
+
+@router.post("/submissions/{submission_id}/comments")
+def add_submission_comment(
+    submission_id: int,
+    payload: dict,
+    user: User = Depends(require_teacher),
+    db: Session = Depends(get_db),
+):
+    """教师对提交添加点评（含可选评分）。"""
+    s = db.get(Submission, submission_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="提交不存在")
+    content = (payload.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="点评内容不能为空")
+    score = payload.get("score")
+    if score is not None:
+        score = int(score)
+        if not 0 <= score <= 100:
+            raise HTTPException(status_code=400, detail="评分需在 0-100 之间")
+    c = SubmissionComment(
+        submission_id=submission_id,
+        teacher_id=user.id,
+        content=content,
+        score=score,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    cd = to_dict(c)
+    cd["teacher_name"] = user.name
+    return cd
+
+
+@router.delete("/submissions/{submission_id}/comments/{comment_id}")
+def delete_submission_comment(
+    submission_id: int,
+    comment_id: int,
+    user: User = Depends(require_teacher),
+    db: Session = Depends(get_db),
+):
+    """删除点评（仅点评者本人或管理员）。"""
+    c = db.get(SubmissionComment, comment_id)
+    if not c or c.submission_id != submission_id:
+        raise HTTPException(status_code=404, detail="点评不存在")
+    if user.role != "admin" and c.teacher_id != user.id:
+        raise HTTPException(status_code=403, detail="无权删除该点评")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/assignments/{assignment_id}/submissions")

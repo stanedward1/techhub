@@ -48,7 +48,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SortBar from '../../components/SortBar.vue'
 import { useSort } from '../../composables/useSort'
-import { activityApi, metaApi } from '../../api'
+import { activityApi, metaApi, studentApi } from '../../api'
 
 const rawItems = ref([])
 const classes = ref([])
@@ -63,7 +63,7 @@ const items = useSorted(rawItems)
 const form = reactive({ title: '', class_id: null, content: '' })
 
 onMounted(async () => {
-  const res = await metaApi.classes()
+  const res = await studentApi.classrooms()
   classes.value = res.items
   load()
 })

@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="toolbar">
-      <StudentSelect v-model="studentId" placeholder="按学生筛选" style="width: 220px" @update:model-value="load" />
+      <StudentSelect v-model="studentId" v-model:classId="classId" showClassFilter placeholder="按学生筛选" style="width: 320px" @update:model-value="load" @update:classId="load" />
       <div class="spacer"></div>
       <el-button type="primary" @click="openCreate">录入积分</el-button>
       <SortBar v-model="order" />
@@ -36,7 +36,7 @@
 
     <el-dialog v-model="dialog" title="录入积分" width="440px">
       <el-form label-width="80px">
-        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" /></el-form-item>
+        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" showClassFilter /></el-form-item>
         <el-form-item label="积分" required>
           <el-input-number v-model="form.points" :min="-100" :max="100" />
           <span style="margin-left: 8px; color: #9ca3af; font-size: 12px">正数加分，负数扣分</span>
@@ -63,6 +63,7 @@ const rawItems = ref([])
 const { order, useSorted } = useSort('points')
 const items = useSorted(rawItems)
 const studentId = ref(null)
+const classId = ref(null)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
@@ -76,7 +77,7 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    const res = await pointApi.list({ page: page.value, page_size: pageSize, student_id: studentId.value })
+    const res = await pointApi.list({ page: page.value, page_size: pageSize, student_id: studentId.value, class_id: classId.value })
     rawItems.value = res.items
     total.value = res.total
   } catch (e) {

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import require_teacher
+from app.deps import require_teacher, get_current_user
 from app.models import (
     Activity,
     ClassPlan,
@@ -19,10 +19,41 @@ from app.models import (
 )
 from app.audit import attach_student, serialize_list_with_students
 from app.utils import to_dict
+from app.permissions import (
+    get_teacher_class_ids,
+    is_student_in_teacher_classes,
+    is_teacher_class_owner,
+    apply_student_class_filter,
+)
 
 router = APIRouter(tags=["班级日志"])
 
 dep = require_teacher
+
+
+def _filter_student_query(db: Session, model, user: User):
+    """教师只能查询自己班级学生的记录；管理员查询全部。"""
+    q = db.query(model)
+    if user.role != "admin":
+        class_ids = get_teacher_class_ids(db, user.id)
+        if class_ids:
+            student_ids = [s.id for s in db.query(Student).filter(Student.class_id.in_(class_ids)).all()]
+            q = q.filter(model.student_id.in_(student_ids))
+        else:
+            return q.filter(False)
+    return q
+
+
+def _check_student_permission(db: Session, user: User, student_id: int):
+    """教师只能操作自己班级学生的记录。"""
+    if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+        raise HTTPException(status_code=403, detail="无权操作该学生的记录")
+
+
+def _check_class_permission(db: Session, user: User, class_id: int):
+    """教师只能操作自己负责班级的数据。"""
+    if user.role != "admin" and not is_teacher_class_owner(db, user.id, class_id):
+        raise HTTPException(status_code=403, detail="无权操作该班级的数据")
 
 
 # ---------------- 工作日志 ----------------
@@ -123,18 +154,30 @@ _plan_crud(TeacherPlan, "teacher-plans", router)
 
 # ---------------- 课程表 ----------------
 @router.get("/api/schedules")
-def list_schedules(class_id: int | None = None, _=Depends(dep), db: Session = Depends(get_db)):
+def list_schedules(class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Schedule)
+    # 教师只能查看自己负责班级的课程表
+    if user.role != "admin":
+        class_ids = get_teacher_class_ids(db, user.id)
+        if class_ids:
+            q = q.filter(Schedule.class_id.in_(class_ids))
+        else:
+            return {"items": [], "total": 0}
     if class_id:
+        # 教师只能查看自己负责班级的课程表
+        if user.role != "admin":
+            _check_class_permission(db, user, class_id)
         q = q.filter(Schedule.class_id == class_id)
     rows = q.order_by(Schedule.day_of_week, Schedule.period).all()
     return {"items": [to_dict(x) for x in rows], "total": len(rows)}
 
 
 @router.post("/api/schedules")
-def create_schedule(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+def create_schedule(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("class_id"):
         raise HTTPException(status_code=400, detail="请选择班级")
+    # 教师只能为自己负责的班级排课
+    _check_class_permission(db, user, payload["class_id"])
     x = Schedule(
         class_id=payload["class_id"],
         day_of_week=payload.get("day_of_week", 1),
@@ -149,9 +192,11 @@ def create_schedule(payload: dict, _=Depends(dep), db: Session = Depends(get_db)
 
 
 @router.delete("/api/schedules/{schedule_id}")
-def delete_schedule(schedule_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+def delete_schedule(schedule_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Schedule, schedule_id)
     if x:
+        # 教师只能删除自己负责班级的课程
+        _check_class_permission(db, user, x.class_id)
         db.delete(x)
         db.commit()
     return {"ok": True}
@@ -159,18 +204,28 @@ def delete_schedule(schedule_id: int, _=Depends(dep), db: Session = Depends(get_
 
 # ---------------- 班级活动 ----------------
 @router.get("/api/activities")
-def list_activities(page: int = 1, page_size: int = 20, _=Depends(dep), db: Session = Depends(get_db)):
+def list_activities(page: int = 1, page_size: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Activity)
+    # 教师只能查看自己负责班级的活动
+    if user.role != "admin":
+        class_ids = get_teacher_class_ids(db, user.id)
+        if class_ids:
+            q = q.filter(Activity.class_id.in_(class_ids))
+        else:
+            return {"items": [], "total": 0}
     total = q.count()
     rows = q.order_by(Activity.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"items": [to_dict(x) for x in rows], "total": total}
 
 
 @router.post("/api/activities")
-def create_activity(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+def create_activity(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     title = (payload.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="活动标题不能为空")
+    # 教师只能为自己负责的班级创建活动
+    if payload.get("class_id"):
+        _check_class_permission(db, user, payload["class_id"])
     x = Activity(
         class_id=payload.get("class_id"),
         title=title,
@@ -184,9 +239,12 @@ def create_activity(payload: dict, _=Depends(dep), db: Session = Depends(get_db)
 
 
 @router.delete("/api/activities/{activity_id}")
-def delete_activity(activity_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+def delete_activity(activity_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Activity, activity_id)
     if x:
+        # 教师只能删除自己负责班级的活动
+        if x.class_id:
+            _check_class_permission(db, user, x.class_id)
         db.delete(x)
         db.commit()
     return {"ok": True}
@@ -194,9 +252,16 @@ def delete_activity(activity_id: int, _=Depends(dep), db: Session = Depends(get_
 
 # ---------------- 师生谈心 ----------------
 @router.get("/api/talks")
-def list_talks(page: int = 1, page_size: int = 20, student_id: int | None = None, _=Depends(dep), db: Session = Depends(get_db)):
-    q = db.query(Talk)
+def list_talks(page: int = 1, page_size: int = 20, student_id: int | None = None, class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    q = _filter_student_query(db, Talk, user)
+    if class_id:
+        q, denied = apply_student_class_filter(db, user, q, class_id, Talk)
+        if denied:
+            return {"items": [], "total": 0}
     if student_id:
+        # 教师只能查看自己班级学生的谈心
+        if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+            return {"items": [], "total": 0}
         q = q.filter(Talk.student_id == student_id)
     total = q.count()
     rows = q.order_by(Talk.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -204,9 +269,11 @@ def list_talks(page: int = 1, page_size: int = 20, student_id: int | None = None
 
 
 @router.post("/api/talks")
-def create_talk(payload: dict, user=Depends(dep), db: Session = Depends(get_db)):
+def create_talk(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("student_id"):
         raise HTTPException(status_code=400, detail="请选择学生")
+    # 教师只能与自己班级学生谈心
+    _check_student_permission(db, user, payload["student_id"])
     x = Talk(student_id=payload["student_id"], teacher_id=user.id, content=payload.get("content", ""))
     db.add(x)
     db.commit()
@@ -215,9 +282,11 @@ def create_talk(payload: dict, user=Depends(dep), db: Session = Depends(get_db))
 
 
 @router.delete("/api/talks/{talk_id}")
-def delete_talk(talk_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+def delete_talk(talk_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Talk, talk_id)
     if x:
+        # 教师只能删除自己班级学生的谈心记录
+        _check_student_permission(db, user, x.student_id)
         db.delete(x)
         db.commit()
     return {"ok": True}
@@ -225,9 +294,16 @@ def delete_talk(talk_id: int, _=Depends(dep), db: Session = Depends(get_db)):
 
 # ---------------- 返校记录 ----------------
 @router.get("/api/return-records")
-def list_return_records(page: int = 1, page_size: int = 20, student_id: int | None = None, _=Depends(dep), db: Session = Depends(get_db)):
-    q = db.query(ReturnRecord)
+def list_return_records(page: int = 1, page_size: int = 20, student_id: int | None = None, class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    q = _filter_student_query(db, ReturnRecord, user)
+    if class_id:
+        q, denied = apply_student_class_filter(db, user, q, class_id, ReturnRecord)
+        if denied:
+            return {"items": [], "total": 0}
     if student_id:
+        # 教师只能查看自己班级学生的返校记录
+        if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+            return {"items": [], "total": 0}
         q = q.filter(ReturnRecord.student_id == student_id)
     total = q.count()
     rows = q.order_by(ReturnRecord.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -235,9 +311,11 @@ def list_return_records(page: int = 1, page_size: int = 20, student_id: int | No
 
 
 @router.post("/api/return-records")
-def create_return_record(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+def create_return_record(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("student_id"):
         raise HTTPException(status_code=400, detail="请选择学生")
+    # 教师只能为自己班级学生登记返校
+    _check_student_permission(db, user, payload["student_id"])
     x = ReturnRecord(
         student_id=payload["student_id"],
         return_date=payload.get("return_date"),
@@ -251,9 +329,11 @@ def create_return_record(payload: dict, _=Depends(dep), db: Session = Depends(ge
 
 
 @router.delete("/api/return-records/{record_id}")
-def delete_return_record(record_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+def delete_return_record(record_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(ReturnRecord, record_id)
     if x:
+        # 教师只能删除自己班级学生的返校记录
+        _check_student_permission(db, user, x.student_id)
         db.delete(x)
         db.commit()
     return {"ok": True}
@@ -261,9 +341,16 @@ def delete_return_record(record_id: int, _=Depends(dep), db: Session = Depends(g
 
 # ---------------- 学生表现 ----------------
 @router.get("/api/performances")
-def list_performances(page: int = 1, page_size: int = 20, student_id: int | None = None, ptype: str = "", _=Depends(dep), db: Session = Depends(get_db)):
-    q = db.query(Performance)
+def list_performances(page: int = 1, page_size: int = 20, student_id: int | None = None, class_id: int | None = None, ptype: str = "", user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    q = _filter_student_query(db, Performance, user)
+    if class_id:
+        q, denied = apply_student_class_filter(db, user, q, class_id, Performance)
+        if denied:
+            return {"items": [], "total": 0}
     if student_id:
+        # 教师只能查看自己班级学生的表现
+        if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+            return {"items": [], "total": 0}
         q = q.filter(Performance.student_id == student_id)
     if ptype:
         q = q.filter(Performance.ptype == ptype)
@@ -273,9 +360,11 @@ def list_performances(page: int = 1, page_size: int = 20, student_id: int | None
 
 
 @router.post("/api/performances")
-def create_performance(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+def create_performance(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("student_id"):
         raise HTTPException(status_code=400, detail="请选择学生")
+    # 教师只能为自己班级学生登记表现
+    _check_student_permission(db, user, payload["student_id"])
     ptype = payload.get("ptype", "积极")
     content = payload.get("content", "")
     # 积分联动：积极默认加分、消极默认减分，可手动指定分值
@@ -306,9 +395,11 @@ def create_performance(payload: dict, _=Depends(dep), db: Session = Depends(get_
 
 
 @router.delete("/api/performances/{performance_id}")
-def delete_performance(performance_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+def delete_performance(performance_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Performance, performance_id)
     if x:
+        # 教师只能删除自己班级学生的表现
+        _check_student_permission(db, user, x.student_id)
         # 同步删除关联的积分记录
         db.query(Point).filter(Point.performance_id == x.id).delete()
         db.delete(x)
@@ -318,9 +409,16 @@ def delete_performance(performance_id: int, _=Depends(dep), db: Session = Depend
 
 # ---------------- 学生评语 ----------------
 @router.get("/api/student-comments")
-def list_student_comments(page: int = 1, page_size: int = 20, student_id: int | None = None, _=Depends(dep), db: Session = Depends(get_db)):
-    q = db.query(StudentComment)
+def list_student_comments(page: int = 1, page_size: int = 20, student_id: int | None = None, class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    q = _filter_student_query(db, StudentComment, user)
+    if class_id:
+        q, denied = apply_student_class_filter(db, user, q, class_id, StudentComment)
+        if denied:
+            return {"items": [], "total": 0}
     if student_id:
+        # 教师只能查看自己班级学生的评语
+        if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+            return {"items": [], "total": 0}
         q = q.filter(StudentComment.student_id == student_id)
     total = q.count()
     rows = q.order_by(StudentComment.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -328,9 +426,11 @@ def list_student_comments(page: int = 1, page_size: int = 20, student_id: int | 
 
 
 @router.post("/api/student-comments")
-def create_student_comment(payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+def create_student_comment(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("student_id"):
         raise HTTPException(status_code=400, detail="请选择学生")
+    # 教师只能为自己班级学生写评语
+    _check_student_permission(db, user, payload["student_id"])
     x = StudentComment(student_id=payload["student_id"], content=payload.get("content", ""))
     db.add(x)
     db.commit()
@@ -339,10 +439,12 @@ def create_student_comment(payload: dict, _=Depends(dep), db: Session = Depends(
 
 
 @router.put("/api/student-comments/{comment_id}")
-def update_student_comment(comment_id: int, payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+def update_student_comment(comment_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(StudentComment, comment_id)
     if not x:
         raise HTTPException(status_code=404, detail="记录不存在")
+    # 教师只能修改自己班级学生的评语
+    _check_student_permission(db, user, x.student_id)
     if payload.get("content") is not None:
         x.content = payload["content"]
     db.commit()
@@ -351,9 +453,11 @@ def update_student_comment(comment_id: int, payload: dict, _=Depends(dep), db: S
 
 
 @router.delete("/api/student-comments/{comment_id}")
-def delete_student_comment(comment_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+def delete_student_comment(comment_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(StudentComment, comment_id)
     if x:
+        # 教师只能删除自己班级学生的评语
+        _check_student_permission(db, user, x.student_id)
         db.delete(x)
         db.commit()
     return {"ok": True}

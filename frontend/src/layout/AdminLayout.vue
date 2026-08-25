@@ -1,7 +1,10 @@
 <template>
   <el-container class="admin-layout">
+    <!-- 移动端遮罩 -->
+    <div v-if="mobileMenuOpen" class="mobile-mask" @click="mobileMenuOpen = false"></div>
+
     <!-- 侧边栏 -->
-    <el-aside :width="collapsed ? '64px' : '220px'" class="aside">
+    <el-aside :width="collapsed ? '64px' : '220px'" class="aside" :class="{ 'mobile-open': mobileMenuOpen }">
       <div class="brand" @click="$router.push('/admin/dashboard')">
         <span class="brand-mark">T</span>
         <transition name="fade">
@@ -18,6 +21,7 @@
         background-color="transparent"
         text-color="rgba(255,255,255,0.65)"
         active-text-color="#fff"
+        @select="mobileMenuOpen = false"
       >
         <el-menu-item index="/admin/dashboard">
           <el-icon><Odometer /></el-icon>
@@ -70,6 +74,7 @@
             <span>系统管理</span>
           </template>
           <el-menu-item index="/admin/users">账号管理</el-menu-item>
+          <el-menu-item v-if="isAdmin" index="/admin/audit-logs">审计日志</el-menu-item>
           <el-menu-item index="/admin/settings">系统设置</el-menu-item>
         </el-sub-menu>
       </el-menu>
@@ -84,6 +89,7 @@
     <el-container class="main-container">
       <el-header class="header">
         <div class="header-left">
+          <el-icon class="mobile-menu-btn" @click="mobileMenuOpen = true"><Menu /></el-icon>
           <span class="header-breadcrumb">
             <template v-for="(part, i) in breadcrumb" :key="i">
               <span v-if="i > 0" class="breadcrumb-sep">/</span>
@@ -102,6 +108,10 @@
           </span>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item command="change-password">
+                <el-icon><Key /></el-icon>
+                修改密码
+              </el-dropdown-item>
               <el-dropdown-item command="portal">
                 <el-icon><Switch /></el-icon>
                 学生端首页
@@ -133,9 +143,11 @@ document.title = 'TechHub'
 const route = useRoute()
 const router = useRouter()
 const user = computed(() => getUser())
+const isAdmin = computed(() => getUser()?.role === 'admin')
 const roleText = computed(() => (getUser()?.role === 'admin' ? '管理员' : '教师'))
 
 const collapsed = ref(false)
+const mobileMenuOpen = ref(false)
 
 const titles = {
   '/admin/dashboard': '数据看板',
@@ -186,6 +198,8 @@ function onCommand(cmd) {
     router.push('/admin/login')
   } else if (cmd === 'portal') {
     router.push('/')
+  } else if (cmd === 'change-password') {
+    router.push('/admin/change-password')
   }
 }
 </script>
@@ -439,18 +453,51 @@ function onCommand(cmd) {
 }
 
 @media (max-width: 768px) {
+  /* 移动端：侧边栏变为抽屉（默认隐藏，点菜单按钮弹出） */
   .aside {
-    width: 56px !important;
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 220px !important;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    z-index: 2000;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
+  }
+  .aside.mobile-open {
+    transform: translateX(0);
+  }
+  .mobile-mask {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 1999;
+  }
+  .mobile-menu-btn {
+    display: inline-flex;
+    font-size: 20px;
+    cursor: pointer;
+    color: #4b5563;
+    margin-right: 8px;
   }
   .header {
     padding: 0 16px;
   }
   .main {
-    padding: 16px;
+    padding: 12px;
   }
   .user-name {
     display: none;
   }
+  .collapse-btn {
+    display: none !important;
+  }
+}
+
+/* 默认隐藏移动端菜单按钮 */
+.mobile-menu-btn {
+  display: none;
 }
 
 .footer {

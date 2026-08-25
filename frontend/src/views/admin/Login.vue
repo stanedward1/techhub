@@ -52,6 +52,11 @@ async function doLogin() {
       return ElMessage.error('学生账号请从学生端登录')
     }
     setAuth(res.token, res.user)
+    if (res.must_change_password) {
+      ElMessage.warning('首次登录或密码已重置，请修改密码后再使用')
+      router.push('/admin/change-password?first=1')
+      return
+    }
     ElMessage.success('登录成功')
     router.push('/admin')
   } catch (e) {

@@ -348,6 +348,59 @@ body {
   .toolbar {
     gap: 8px;
   }
+
+  /* 表格移动端横向滚动，避免挤压 */
+  .el-table {
+    font-size: 12px;
+  }
+  .el-table .cell {
+    padding: 0 8px;
+  }
+
+  /* 对话框移动端近全屏 */
+  .el-dialog {
+    --el-dialog-width: 92% !important;
+    margin-top: 5vh !important;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  /* 分页移动端紧凑 */
+  .el-pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .el-pagination .el-pagination__total {
+    margin-right: 0;
+    width: 100%;
+    text-align: center;
+  }
+
+  /* 工具栏内元素在窄屏下更灵活 */
+  .toolbar .el-select,
+  .toolbar .el-input {
+    width: 100% !important;
+    flex: 1 1 100%;
+  }
+  .toolbar .el-button {
+    margin-left: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 13px;
+  }
+  .page-title {
+    font-size: 17px;
+  }
+  .el-page-header {
+    font-size: 15px;
+  }
+  /* 表格在极小屏强制横向滚动 */
+  .page-card {
+    overflow-x: auto;
+  }
 }
 
 /* -------- 滚动条美化 -------- */

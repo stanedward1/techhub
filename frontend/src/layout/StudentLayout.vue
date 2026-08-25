@@ -141,4 +141,38 @@ function onCommand(cmd) {
   font-size: 12px;
   padding: 20px;
 }
+
+/* -------- 移动端适配 -------- */
+@media (max-width: 768px) {
+  .nav-inner {
+    padding: 0 12px;
+    gap: 16px;
+  }
+  .nav-links {
+    gap: 4px;
+  }
+  .nav-links a {
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+  .logo-text {
+    display: none;
+  }
+  .uname {
+    display: none;
+  }
+  .content {
+    padding: 16px 12px;
+  }
+}
+@media (max-width: 480px) {
+  .nav-links {
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+  .nav-links::-webkit-scrollbar {
+    display: none;
+  }
+}
 </style>

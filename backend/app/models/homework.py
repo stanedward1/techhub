@@ -58,3 +58,16 @@ class WorkComment(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SubmissionComment(Base):
+    """教师对作业提交的点评（评语），直接挂在提交下。"""
+
+    __tablename__ = "submission_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    submission_id = Column(Integer, ForeignKey("submissions.id"), nullable=False, index=True)
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    content = Column(Text, nullable=False)
+    score = Column(Integer, nullable=True)  # 可选评分 0-100
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

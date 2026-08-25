@@ -2,7 +2,7 @@
   <div>
     <div class="toolbar">
       <el-input v-model="subject" placeholder="按科目筛选" clearable style="width: 180px" @clear="load" />
-      <StudentSelect v-model="studentId" placeholder="按学生筛选" style="width: 220px" @update:model-value="load" />
+      <StudentSelect v-model="studentId" v-model:classId="classId" showClassFilter placeholder="按学生筛选" style="width: 320px" @update:model-value="load" @update:classId="load" />
       <el-button @click="load">查询</el-button>
       <div class="spacer"></div>
       <el-button @click="downloadTemplate">下载模板</el-button>
@@ -36,7 +36,7 @@
 
     <el-dialog v-model="dialog" :title="editing ? '编辑成绩' : '录入成绩'" width="440px">
       <el-form label-width="80px">
-        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" /></el-form-item>
+        <el-form-item label="学生" required><StudentSelect v-model="form.student_id" showClassFilter /></el-form-item>
         <el-form-item label="科目" required><el-input v-model="form.subject" /></el-form-item>
         <el-form-item label="成绩" required><el-input-number v-model="form.score" :min="0" :max="100" /></el-form-item>
         <el-form-item label="考试名称"><el-input v-model="form.exam_name" /></el-form-item>
@@ -108,6 +108,7 @@ const { order, useSorted } = useSort('scores')
 const items = useSorted(rawItems)
 const subject = ref('')
 const studentId = ref(null)
+const classId = ref(null)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
@@ -129,7 +130,7 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    const res = await scoreApi.list({ page: page.value, page_size: pageSize, subject: subject.value, student_id: studentId.value })
+    const res = await scoreApi.list({ page: page.value, page_size: pageSize, subject: subject.value, student_id: studentId.value, class_id: classId.value })
     rawItems.value = res.items
     total.value = res.total
   } catch (e) {
@@ -178,7 +179,7 @@ async function remove(row) {
 }
 
 async function exportExcel() {
-  const res = await scoreApi.export({ student_id: studentId.value })
+  const res = await scoreApi.export({ student_id: studentId.value, class_id: classId.value })
   const blob = new Blob([res], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
