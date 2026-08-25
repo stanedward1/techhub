@@ -187,7 +187,8 @@ export const adminApi = {
   setSetting: (key, value) => request.put(`/api/settings/${key}`, { value }),
   upgradeGrade: () => request.post('/api/settings/upgrade-grade'),
   dashboard: () => request.get('/api/stats/dashboard'),
-  auditLogs: (params) => request.get('/api/admin/audit-logs', { params })
+  auditLogs: (params) => request.get('/api/admin/audit-logs', { params }),
+  auditLogActions: () => request.get('/api/admin/audit-logs/actions')
 }
 
 // ============ 文件上传 ============

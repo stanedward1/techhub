@@ -67,3 +67,11 @@ def audit(db: Session, user, action: str, target: str = "", detail: str = ""):
             detail=detail,
         )
     )
+
+
+def student_name(db: Session, student_id) -> str:
+    """根据学生 ID 获取学生姓名（用于审计日志 target 中记录操作对象）。"""
+    if not student_id:
+        return ""
+    s = db.get(Student, student_id)
+    return s.name if s else ""

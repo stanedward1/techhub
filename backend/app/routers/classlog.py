@@ -17,7 +17,7 @@ from app.models import (
     User,
     WorkLog,
 )
-from app.audit import attach_student, serialize_list_with_students
+from app.audit import attach_student, serialize_list_with_students, audit, student_name
 from app.utils import to_dict
 from app.permissions import (
     get_teacher_class_ids,
@@ -73,6 +73,7 @@ def create_work_log(payload: dict, user=Depends(dep), db: Session = Depends(get_
         content=payload.get("content", ""),
     )
     db.add(x)
+    audit(db, user, "create_work_log", target=f"新增工作日志")
     db.commit()
     db.refresh(x)
     return to_dict(x)
@@ -86,6 +87,7 @@ def update_work_log(log_id: int, payload: dict, _=Depends(dep), db: Session = De
     for f in ("date", "content"):
         if f in payload and payload[f] is not None:
             setattr(x, f, payload[f])
+    audit(db, user, "update_work_log", target=f"日志#{log_id}")
     db.commit()
     db.refresh(x)
     return to_dict(x)
@@ -96,6 +98,7 @@ def delete_work_log(log_id: int, _=Depends(dep), db: Session = Depends(get_db)):
     x = db.get(WorkLog, log_id)
     if x:
         db.delete(x)
+        audit(db, user, "delete_work_log", target=f"日志#{log_id}")
         db.commit()
     return {"ok": True}
 
@@ -103,7 +106,7 @@ def delete_work_log(log_id: int, _=Depends(dep), db: Session = Depends(get_db)):
 # ---------------- 班级计划 / 教师计划 ----------------
 def _plan_crud(model, prefix, router):
     @router.get(f"/api/{prefix}")
-    def list_plans(page: int = 1, page_size: int = 20, plan_type: str = "", _=Depends(dep), db: Session = Depends(get_db)):
+    def list_plans(page: int = 1, page_size: int = 20, plan_type: str = "", user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         q = db.query(model)
         if plan_type:
             q = q.filter(model.plan_type == plan_type)
@@ -123,27 +126,30 @@ def _plan_crud(model, prefix, router):
             content=payload.get("content", ""),
         )
         db.add(x)
+        audit(db, user, "create_plan", target=f"新增计划-{title}")
         db.commit()
         db.refresh(x)
         return to_dict(x)
 
     @router.put(f"/api/{prefix}/{{item_id}}")
-    def update_plan(item_id: int, payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+    def update_plan(item_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         x = db.get(model, item_id)
         if not x:
             raise HTTPException(status_code=404, detail="记录不存在")
         for f in ("title", "plan_type", "content"):
             if f in payload and payload[f] is not None:
                 setattr(x, f, payload[f])
+        audit(db, user, "update_plan", target=f"计划#{item_id}")
         db.commit()
         db.refresh(x)
         return to_dict(x)
 
     @router.delete(f"/api/{prefix}/{{item_id}}")
-    def delete_plan(item_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+    def delete_plan(item_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         x = db.get(model, item_id)
         if x:
             db.delete(x)
+            audit(db, user, "delete_plan", target=f"计划#{item_id}")
             db.commit()
         return {"ok": True}
 
@@ -186,6 +192,7 @@ def create_schedule(payload: dict, user: User = Depends(get_current_user), db: S
         teacher_name=payload.get("teacher_name"),
     )
     db.add(x)
+    audit(db, user, "create_schedule", target=f"新增课表")
     db.commit()
     db.refresh(x)
     return to_dict(x)
@@ -198,6 +205,7 @@ def delete_schedule(schedule_id: int, user: User = Depends(get_current_user), db
         # 教师只能删除自己负责班级的课程
         _check_class_permission(db, user, x.class_id)
         db.delete(x)
+        audit(db, user, "delete_schedule", target=f"课表#{schedule_id}")
         db.commit()
     return {"ok": True}
 
@@ -233,6 +241,7 @@ def create_activity(payload: dict, user: User = Depends(get_current_user), db: S
         filepath=payload.get("filepath"),
     )
     db.add(x)
+    audit(db, user, "create_activity", target=f"新增活动")
     db.commit()
     db.refresh(x)
     return to_dict(x)
@@ -246,6 +255,7 @@ def delete_activity(activity_id: int, user: User = Depends(get_current_user), db
         if x.class_id:
             _check_class_permission(db, user, x.class_id)
         db.delete(x)
+        audit(db, user, "delete_activity", target=f"活动#{activity_id}")
         db.commit()
     return {"ok": True}
 
@@ -276,6 +286,7 @@ def create_talk(payload: dict, user: User = Depends(get_current_user), db: Sessi
     _check_student_permission(db, user, payload["student_id"])
     x = Talk(student_id=payload["student_id"], teacher_id=user.id, content=payload.get("content", ""))
     db.add(x)
+    audit(db, user, "create_talk", target=f"新增谈心-{student_name(db, x.student_id)}", detail=f"内容：{(x.content or '')[:50]}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -288,6 +299,7 @@ def delete_talk(talk_id: int, user: User = Depends(get_current_user), db: Sessio
         # 教师只能删除自己班级学生的谈心记录
         _check_student_permission(db, user, x.student_id)
         db.delete(x)
+        audit(db, user, "delete_talk", target=f"谈心#{talk_id}-{student_name(db, x.student_id)}")
         db.commit()
     return {"ok": True}
 
@@ -323,6 +335,7 @@ def create_return_record(payload: dict, user: User = Depends(get_current_user), 
         note=payload.get("note"),
     )
     db.add(x)
+    audit(db, user, "create_return_record", target=f"新增返校-{student_name(db, x.student_id)}", detail=f"返校日期：{x.return_date or ''}；事由：{(x.reason or '')[:50]}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -335,6 +348,7 @@ def delete_return_record(record_id: int, user: User = Depends(get_current_user),
         # 教师只能删除自己班级学生的返校记录
         _check_student_permission(db, user, x.student_id)
         db.delete(x)
+        audit(db, user, "delete_return_record", target=f"返校#{record_id}-{student_name(db, x.student_id)}")
         db.commit()
     return {"ok": True}
 
@@ -389,6 +403,7 @@ def create_performance(payload: dict, user: User = Depends(get_current_user), db
             performance_id=x.id,
         )
     )
+    audit(db, user, "create_performance", target=f"新增表现-{student_name(db, x.student_id)}", detail=f"类型：{x.ptype}；内容：{(x.content or '')[:50]}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -403,6 +418,7 @@ def delete_performance(performance_id: int, user: User = Depends(get_current_use
         # 同步删除关联的积分记录
         db.query(Point).filter(Point.performance_id == x.id).delete()
         db.delete(x)
+        audit(db, user, "delete_performance", target=f"表现#{performance_id}-{student_name(db, x.student_id)}")
         db.commit()
     return {"ok": True}
 
@@ -433,6 +449,7 @@ def create_student_comment(payload: dict, user: User = Depends(get_current_user)
     _check_student_permission(db, user, payload["student_id"])
     x = StudentComment(student_id=payload["student_id"], content=payload.get("content", ""))
     db.add(x)
+    audit(db, user, "create_student_comment", target=f"新增评语-{student_name(db, x.student_id)}", detail=f"内容：{(x.content or '')[:80]}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -447,6 +464,7 @@ def update_student_comment(comment_id: int, payload: dict, user: User = Depends(
     _check_student_permission(db, user, x.student_id)
     if payload.get("content") is not None:
         x.content = payload["content"]
+    audit(db, user, "update_student_comment", target=f"评语#{comment_id}-{student_name(db, x.student_id)}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -459,5 +477,6 @@ def delete_student_comment(comment_id: int, user: User = Depends(get_current_use
         # 教师只能删除自己班级学生的评语
         _check_student_permission(db, user, x.student_id)
         db.delete(x)
+        audit(db, user, "delete_student_comment", target=f"评语#{comment_id}-{student_name(db, x.student_id)}")
         db.commit()
     return {"ok": True}

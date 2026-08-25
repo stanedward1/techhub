@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.audit import batch_user_map
+from app.audit import batch_user_map, audit, student_name
 from app.database import get_db
 from app.deps import get_current_user, require_student, require_teacher
 from app.models import (
@@ -97,6 +97,7 @@ def create_assignment(payload: dict, user: User = Depends(require_teacher), db: 
         short_name=payload.get("short_name") or title,
     )
     db.add(a)
+    audit(db, user, "create_assignment", target=f"布置作业")
     db.commit()
     db.refresh(a)
     return to_dict(a)
@@ -116,6 +117,7 @@ def update_assignment(
             setattr(a, field, payload[field])
     if payload.get("class_id") and db.get(Classroom, payload["class_id"]):
         a.class_id = payload["class_id"]
+    audit(db, user, "update_assignment", target=f"作业#{assignment_id}")
     db.commit()
     db.refresh(a)
     return to_dict(a)
@@ -131,6 +133,7 @@ def delete_assignment(
     if a.created_by != user.id and user.role != "admin":
         raise HTTPException(status_code=403, detail="只能删除自己创建的任务")
     db.delete(a)
+    audit(db, user, "delete_assignment", target=f"作业#{assignment_id}")
     db.commit()
     return {"ok": True}
 
@@ -234,6 +237,9 @@ def add_submission_comment(
         score=score,
     )
     db.add(c)
+    stu = db.get(User, s.student_id)
+    stu_name = stu.name if stu else ""
+    audit(db, user, "add_submission_comment", target=f"点评-{stu_name}")
     db.commit()
     db.refresh(c)
     cd = to_dict(c)
@@ -255,6 +261,9 @@ def delete_submission_comment(
     if user.role != "admin" and c.teacher_id != user.id:
         raise HTTPException(status_code=403, detail="无权删除该点评")
     db.delete(c)
+    stu = db.get(User, s.student_id)
+    stu_name = stu.name if stu else ""
+    audit(db, user, "delete_submission_comment", target=f"删除点评-{stu_name}")
     db.commit()
     return {"ok": True}
 
@@ -338,6 +347,7 @@ def mark_excellent(
         raise HTTPException(status_code=400, detail="该作品已入选优秀")
     e = ExcellentWork(submission_id=submission_id, selected_by=user.id, note=payload.get("note", ""))
     db.add(e)
+    audit(db, user, "mark_excellent", target=f"优秀-提交#{submission_id}")
     db.commit()
     db.refresh(e)
     return to_dict(e)
@@ -350,6 +360,7 @@ def unmark_excellent(
     e = db.query(ExcellentWork).filter(ExcellentWork.submission_id == submission_id).first()
     if e:
         db.delete(e)
+        audit(db, user, "unmark_excellent", target=f"取消优秀-提交#{submission_id}")
         db.commit()
     return {"ok": True}
 

@@ -51,7 +51,7 @@ def list_users(role: str = "", keyword: str = "", _=Depends(admin_dep), db: Sess
 
 
 @router.post("/api/admin/users")
-def create_user(payload: dict, _=Depends(admin_dep), db: Session = Depends(get_db)):
+def create_user(payload: dict, user=Depends(admin_dep), db: Session = Depends(get_db)):
     username = (payload.get("username") or "").strip()
     password = payload.get("password") or "123456"
     name = (payload.get("name") or "").strip()
@@ -75,6 +75,7 @@ def create_user(payload: dict, _=Depends(admin_dep), db: Session = Depends(get_d
         must_change_password=must_change,
     )
     db.add(u)
+    audit(db, user, "create_user", target=f"{u.username} ({u.name})", detail=f"role={role}")
     db.commit()
     db.refresh(u)
     return _user_out(db, u)
@@ -96,6 +97,7 @@ def update_user(user_id: int, payload: dict, user=Depends(admin_dep), db: Sessio
     for f in ("name", "phone", "role", "class_id"):
         if f in payload and payload[f] is not None:
             setattr(u, f, payload[f])
+    audit(db, user, "update_user", target=f"{u.username} ({u.name})", detail=f"fields={[f for f in ('name','phone','role','class_id') if f in payload and payload[f] is not None]}")
     db.commit()
     db.refresh(u)
     return _user_out(db, u)
@@ -174,16 +176,29 @@ def upgrade_grade(user=Depends(admin_dep), db: Session = Depends(get_db)):
 
 
 # ---------------- 审计日志 ----------------（仅管理员）
+@router.get("/api/admin/audit-logs/actions")
+def list_audit_log_actions(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """返回所有出现过的操作类型（去重，供前端下拉框动态展示）。"""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可查看审计日志")
+    rows = db.query(OperationLog.action).distinct().order_by(OperationLog.action).all()
+    return {"items": [r[0] for r in rows]}
+
+
 @router.get("/api/admin/audit-logs")
 def list_audit_logs(
     action: str = "",
     keyword: str = "",
+    date: str = "",
     page: int = 1,
     page_size: int = 20,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """查询操作审计日志（仅管理员）。"""
+    """查询操作审计日志（仅管理员）。支持按操作类型、关键字、日期（某日）筛选。"""
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="仅管理员可查看审计日志")
     q = db.query(OperationLog)
@@ -194,6 +209,16 @@ def list_audit_logs(
             OperationLog.username.contains(keyword)
             | OperationLog.target.contains(keyword)
         )
+    if date:
+        # 查询该日 00:00:00 - 23:59:59 的日志
+        from datetime import datetime, time
+        try:
+            d = datetime.strptime(date, "%Y-%m-%d").date()
+            start = datetime.combine(d, time.min)
+            end = datetime.combine(d, time.max)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式应为 YYYY-MM-DD")
+        q = q.filter(OperationLog.created_at >= start, OperationLog.created_at <= end)
     total = q.count()
     rows = q.order_by(OperationLog.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"items": [to_dict(x) for x in rows], "total": total}
@@ -245,6 +270,10 @@ def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
         items = []
         for l in day_leaves:
             stu = db.get(Student, l.student_id)
+            class_name = ""
+            if stu and stu.class_id:
+                cls = db.get(Classroom, stu.class_id)
+                class_name = cls.name if cls else ""
             duration = 1
             if l.start_date and l.end_date:
                 try:
@@ -255,6 +284,7 @@ def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
                     pass
             items.append({
                 "name": stu.name if stu else "未知",
+                "class_name": class_name,
                 "reason": l.reason or "未填写",
                 "duration": duration,
                 "start": l.start_date or "",
@@ -263,11 +293,28 @@ def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
         trend.append({"date": day[5:], "count": len(day_leaves)})
         leave_details.append({"date": day[5:], "count": len(day_leaves), "items": items})
 
-    # 成绩分布（含百分比）
+    # 成绩分布（按考试名称分组，含百分比）
     score_q = db.query(Score)
     if student_ids is not None:
         score_q = score_q.filter(Score.student_id.in_(student_ids))
-    scores = [s.score for s in score_q.all()]
+    score_rows = score_q.all()
+    # 按考试名称分组：未命名考试归入 "日常测验"
+    exam_groups = {}
+    for s in score_rows:
+        en = (s.exam_name or "").strip() or "日常测验"
+        exam_groups.setdefault(en, []).append(s.score)
+    score_dist_by_exam = {}
+    for en, scs in sorted(exam_groups.items()):
+        total_n = len(scs) if scs else 1
+        score_dist_by_exam[en] = {
+            "total": len(scs),
+            "优秀(90+)": {"count": sum(1 for x in scs if x >= 90), "percent": round(sum(1 for x in scs if x >= 90) / total_n * 100, 1)},
+            "良好(75-89)": {"count": sum(1 for x in scs if 75 <= x < 90), "percent": round(sum(1 for x in scs if 75 <= x < 90) / total_n * 100, 1)},
+            "中等(60-74)": {"count": sum(1 for x in scs if 60 <= x < 75), "percent": round(sum(1 for x in scs if 60 <= x < 75) / total_n * 100, 1)},
+            "待提高(<60)": {"count": sum(1 for x in scs if x < 60), "percent": round(sum(1 for x in scs if x < 60) / total_n * 100, 1)},
+        }
+    # 兼容旧前端：总体分布
+    scores = [s.score for s in score_rows]
     total_scores = len(scores) if scores else 1
     dist = {
         "优秀(90+)": {"count": sum(1 for x in scores if x >= 90), "percent": round(sum(1 for x in scores if x >= 90) / total_scores * 100, 1)},
@@ -283,10 +330,14 @@ def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
         leave_q = leave_q.filter(Leave.student_id.in_(student_ids))
     for l in leave_q.order_by(Leave.id.desc()).limit(5).all():
         stu = db.get(Student, l.student_id)
+        class_name = ""
+        if stu and stu.class_id:
+            cls = db.get(Classroom, stu.class_id)
+            class_name = cls.name if cls else ""
         recent.append(
             {
                 "type": "请假",
-                "text": f"{stu.name if stu else '未知'} 请假：{l.reason or '未填写'}",
+                "text": f"{class_name} {stu.name if stu else '未知'} 请假：{l.reason or '未填写'}",
                 "time": l.created_at.strftime("%Y-%m-%d %H:%M") if l.created_at else "",
             }
         )
@@ -314,5 +365,6 @@ def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
         "leave_trend": trend,
         "leave_details": leave_details,
         "score_dist": dist,
+        "score_dist_by_exam": score_dist_by_exam,
         "recent": recent,
     }

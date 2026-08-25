@@ -58,6 +58,7 @@ def create_school(payload: dict, user: User = Depends(get_current_user), db: Ses
         raise HTTPException(status_code=400, detail="学校名称和代码不能为空")
     s = School(name=name, code=code, address=payload.get("address"), phone=payload.get("phone"))
     db.add(s)
+    audit(db, user, "create_school", target=f"新增学校")
     db.commit()
     db.refresh(s)
     return to_dict(s)
@@ -74,6 +75,7 @@ def update_school(school_id: int, payload: dict, user: User = Depends(get_curren
     for f in ("name", "code", "address", "phone"):
         if f in payload and payload[f] is not None:
             setattr(s, f, payload[f])
+    audit(db, user, "update_school", target=f"学校#{school_id}")
     db.commit()
     return to_dict(s)
 
@@ -86,6 +88,7 @@ def delete_school(school_id: int, user: User = Depends(get_current_user), db: Se
     s = db.get(School, school_id)
     if s:
         db.delete(s)
+        audit(db, user, "delete_school", target=f"学校#{school_id}")
         db.commit()
     return {"ok": True}
 
@@ -127,6 +130,7 @@ def create_classroom(payload: dict, user: User = Depends(get_current_user), db: 
         teacher_id=payload.get("teacher_id"),
     )
     db.add(c)
+    audit(db, user, "create_classroom", target=f"新增班级")
     db.commit()
     db.refresh(c)
     return to_dict(c)
@@ -140,9 +144,18 @@ def update_classroom(class_id: int, payload: dict, user: User = Depends(get_curr
     # 教师只能修改自己负责的班级
     if user.role != "admin" and c.teacher_id != user.id:
         raise HTTPException(status_code=403, detail="无权修改该班级")
+    # 教师不能修改班级对应的教师（teacher_id 仅管理员可编辑）
+    if user.role != "admin" and "teacher_id" in payload and payload["teacher_id"] is not None:
+        raise HTTPException(status_code=403, detail="教师无权修改班级对应的教师")
+    # 管理员修改 teacher_id 时校验目标必须是教师角色
+    if user.role == "admin" and "teacher_id" in payload and payload["teacher_id"] is not None:
+        t = db.get(User, payload["teacher_id"])
+        if not t or t.role != "teacher":
+            raise HTTPException(status_code=400, detail="所选教师不存在或不是教师角色")
     for f in ("name", "code", "major", "grade", "teacher_id"):
         if f in payload and payload[f] is not None:
             setattr(c, f, payload[f])
+    audit(db, user, "update_classroom", target=f"班级#{class_id}")
     db.commit()
     return to_dict(c)
 
@@ -155,6 +168,7 @@ def delete_classroom(class_id: int, user: User = Depends(get_current_user), db: 
     c = db.get(Classroom, class_id)
     if c:
         db.delete(c)
+        audit(db, user, "delete_classroom", target=f"班级#{class_id}")
         db.commit()
     return {"ok": True}
 
@@ -164,6 +178,8 @@ def delete_classroom(class_id: int, user: User = Depends(get_current_user), db: 
 def list_students(
     class_id: int = None,
     keyword: str = "",
+    page: int = 1,
+    page_size: int = 20,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -177,8 +193,14 @@ def list_students(
         query = query.filter(Student.class_id == class_id)
     if keyword:
         query = query.filter(Student.name.contains(keyword) | Student.student_no.contains(keyword))
-    rows = query.order_by(Student.id).all()
-    return {"items": [_student_out(db, s) for s in rows], "total": len(rows)}
+    total = query.count()
+    rows = (
+        query.order_by(Student.id)
+        .offset((max(page, 1) - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return {"items": [_student_out(db, s) for s in rows], "total": total}
 
 
 @router.post("/api/students")
@@ -206,6 +228,7 @@ def create_student(payload: dict, user: User = Depends(get_current_user), db: Se
         student_type=payload.get("student_type", "day"),
     )
     db.add(s)
+    audit(db, user, "create_student", target=f"新增学生-{s.name} ({s.student_no})")
     db.commit()
     db.refresh(s)
     return _student_out(db, s)
@@ -225,6 +248,7 @@ def update_student(student_id: int, payload: dict, user: User = Depends(get_curr
             if f == "class_id" and user.role != "admin":
                 raise HTTPException(status_code=403, detail="教师无权修改学生班级")
             setattr(s, f, payload[f])
+    audit(db, user, "update_student", target=f"学生#{student_id}-{s.name}")
     db.commit()
     db.refresh(s)
     return _student_out(db, s)
@@ -239,6 +263,7 @@ def delete_student(student_id: int, user: User = Depends(get_current_user), db: 
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
         raise HTTPException(status_code=403, detail="无权删除该学生")
     db.delete(s)
+    audit(db, user, "delete_student", target=f"学生#{student_id}")
     db.commit()
     return {"ok": True}
     items = []

@@ -24,6 +24,7 @@
         <el-collapse>
           <el-collapse-item v-for="day in leaveDetailDays" :key="day.date" :title="`${day.date} 日 — ${day.count} 人请假`">
             <el-table :data="day.items" size="small" v-if="day.items.length">
+              <el-table-column prop="class_name" label="班级" width="130" />
               <el-table-column prop="name" label="姓名" width="100" />
               <el-table-column prop="reason" label="请假原因" min-width="160" />
               <el-table-column label="时长" width="80">
@@ -39,9 +40,14 @@
       </div>
     </div>
 
-    <!-- 成绩分布 -->
+    <!-- 成绩分布（按考试名称） -->
     <div class="page-card chart-card">
-      <h3 class="card-title">成绩分布</h3>
+      <div class="chart-head">
+        <h3 class="card-title">成绩分布</h3>
+        <el-select v-model="selectedExam" placeholder="全部考试" clearable style="width: 200px" @change="renderCharts">
+          <el-option v-for="e in examNames" :key="e" :label="e" :value="e" />
+        </el-select>
+      </div>
       <div ref="distRef" style="width: 100%; height: 300px;"></div>
     </div>
 
@@ -66,11 +72,24 @@ import * as echarts from 'echarts'
 import { adminApi } from '../../api'
 
 const router = useRouter()
-const data = ref({ counts: {}, leave_trend: [], leave_details: [], score_dist: {}, recent: [] })
+const data = ref({ counts: {}, leave_trend: [], leave_details: [], score_dist: {}, score_dist_by_exam: {}, recent: [] })
 const trendRef = ref(null)
 const distRef = ref(null)
+const selectedExam = ref('')
 let trendChart = null
 let distChart = null
+
+// 考试名称列表（用于下拉选择）
+const examNames = computed(() => Object.keys(data.value.score_dist_by_exam || {}))
+
+// 当前要展示的成绩分布数据
+const currentDist = computed(() => {
+  const byExam = data.value.score_dist_by_exam || {}
+  if (selectedExam.value && byExam[selectedExam.value]) {
+    return byExam[selectedExam.value]
+  }
+  return data.value.score_dist || {}
+})
 
 const statCards = [
   { icon: 'User', bg: 'linear-gradient(135deg, #2563eb, #4f46e5)', key: 'student', route: '/admin/students' },
@@ -156,7 +175,7 @@ function renderCharts() {
   if (distRef.value) {
     if (distChart) distChart.dispose()
     distChart = echarts.init(distRef.value)
-    const dist = data.value.score_dist || {}
+    const dist = currentDist.value || {}
     const distData = Object.entries(dist).map(([name, val]) => ({
       name,
       value: val.count || 0,
@@ -164,6 +183,9 @@ function renderCharts() {
     }))
     const total = distData.reduce((s, d) => s + d.value, 0) || 1
     distChart.setOption({
+      title: selectedExam.value
+        ? { text: selectedExam.value, left: 'center', top: 6, textStyle: { fontSize: 13, color: '#4b5563', fontWeight: 500 } }
+        : undefined,
       tooltip: {
         trigger: 'item',
         formatter: (p) => `${p.name}<br/>人数：${p.value} 人<br/>占比：${p.percent}%`
@@ -201,4 +223,13 @@ function renderCharts() {
 .stat-value { font-size: 24px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
 .stat-label { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
 .chart-card { margin-bottom: 16px; }
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.chart-head .card-title { margin: 0; }
 </style>
