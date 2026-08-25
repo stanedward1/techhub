@@ -139,9 +139,9 @@ def seed_all():
 
         # ===== 学校 =====
         school = School(
-            name="湘阴县第一职业中等专业学校",
+            name="****学校",
             code="XYZJ01",
-            address="湖南省岳阳市湘阴县文星镇",
+            address="****",
             phone="0730-8888888",
         )
         db.add(school)
