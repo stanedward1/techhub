@@ -767,9 +767,71 @@ def get_student_profile(student_id: int, _=Depends(dep), db: Session = Depends(g
         "skill": min(100, round(submission_summary["rate"], 1)),
     }
 
+    # 每个评价维度的评价依据说明：数据来源 / 计算方法 / 相关指标
+    radar_basis = [
+        {
+            "key": "academic",
+            "name": "学业",
+            "score": radar["academic"],
+            "source": "学生成绩记录（成绩管理模块）",
+            "method": "按全部考试成绩取平均分，无成绩记录时默认 50 分，满分 100",
+            "indicators": [
+                f"考试记录 {score_summary['total']} 次",
+                f"平均分 {score_summary['avg']} 分",
+                f"最高 {score_summary['max']} 分 / 最低 {score_summary['min']} 分",
+            ],
+        },
+        {
+            "key": "moral",
+            "name": "品德",
+            "score": radar["moral"],
+            "source": "学生积分记录（积分管理模块，含表现联动加分/扣分）",
+            "method": "基准 50 分 + 积分总计 × 2（上限 100），无积分记录时默认 50 分",
+            "indicators": [
+                f"积分总计 {point_summary['total']} 分",
+                f"加分 {point_summary['positive']} 分 / 扣分 {point_summary['negative']} 分",
+                f"积分记录 {point_summary['count']} 条",
+            ],
+        },
+        {
+            "key": "attendance",
+            "name": "出勤",
+            "score": radar["attendance"],
+            "source": "请假/考勤记录（考勤管理模块）",
+            "method": "满分 100 分，每请假 1 次扣 5 分，最低 0 分",
+            "indicators": [
+                f"请假记录 {leave_summary['total']} 次",
+            ],
+        },
+        {
+            "key": "activity",
+            "name": "活动",
+            "score": radar["activity"],
+            "source": "学生表现记录（学生表现模块，积极/消极）",
+            "method": "基准 50 分 + 积极表现次数 × 5（上限 100），无记录时默认 50 分",
+            "indicators": [
+                f"表现记录 {performance_summary['total']} 条",
+                f"积极 {performance_summary['positive']} 次 / 消极 {performance_summary['negative']} 次",
+            ],
+        },
+        {
+            "key": "skill",
+            "name": "技能",
+            "score": radar["skill"],
+            "source": "作业提交与优秀作品（作业平台）",
+            "method": "优秀率 = 优秀作品数 ÷ 提交总数 × 100，满分 100",
+            "indicators": [
+                f"提交 {submission_summary['total']} 次",
+                f"优秀作品 {submission_summary['excellent']} 个",
+                f"优秀率 {submission_summary['rate']}%",
+            ],
+        },
+    ]
+
     return {
         "student": _student_out(db, student),
         "radar": radar,
+        "radar_basis": radar_basis,
         "score_summary": score_summary,
         "point_summary": point_summary,
         "leave_summary": leave_summary,

@@ -10,8 +10,6 @@ TechHub 将**在线作业提交平台**、**班级日志管理系统**、**教�
 | ---- | ---- |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计：技术栈、目录结构、权限模型、数据模型、部署架构、设计决策 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发规范：环境搭建、代码规范、Git 规范、测试规范、发布流程 |
-| [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | 迭代需求规格：优秀作品、学生账号、工作台精简、审阅渲染（含验收标准） |
-| [docs/PRODUCT.md](docs/PRODUCT.md) | 产品综合文档：市场分析、竞品对比、产品需求、技术实现方案 |
 
 ## 核心特性
 
@@ -128,6 +126,28 @@ techhub/
 
 ## 开发环境快速开始
 
+### 🚀 一键启动（推荐）
+
+项目根目录提供 `start.sh` 一键脚本，自动完成：**架构检测（x86_64 / arm64）→ 安装系统依赖 → 初始化 MySQL/MariaDB → 安装后端依赖（阿里云镜像）→ 安装前端依赖（npmmirror 镜像）→ 启动前后端服务**。
+
+```bash
+cd techhub
+
+# 一键启动（首次运行会自动安装全部依赖，约 5-10 分钟）
+./start.sh
+
+# 仅安装依赖、不启动服务（适合先准备环境）
+./start.sh --install-only
+```
+
+启动完成后：
+- 前端：http://localhost:5173 （局域网设备用 `http://<本机IP>:5173/`）
+- 后端 API 文档：http://localhost:8080/docs
+- 数据库：默认 `techhub`，账号 `root / longbiu20260824`（可在 `start.sh` 顶部修改）
+
+> **说明**：`start.sh` 使用 MariaDB 作为 MySQL 兼容数据库（Debian/Ubuntu 默认包），并自动处理
+> Python 虚拟环境、`.env` 配置（MySQL 连接串）、前端 node_modules 平台差异（x86/ARM 原生二进制）。
+
 ### 环境要求
 
 | 工具 | 最低版本 |
@@ -135,8 +155,9 @@ techhub/
 | Python | 3.10+ |
 | Node.js | 18+ |
 | npm | 9+ |
+| MariaDB/MySQL | 10.4+ / 8.0+ |
 
-### 1. 启动后端
+### 1. 启动后端（手动方式）
 
 ```bash
 cd backend

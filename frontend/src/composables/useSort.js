@@ -16,6 +16,15 @@ function savePrefs(prefs) {
 
 const prefs = loadPrefs()
 
+/**
+ * 取每条记录用于排序的时间键。
+ * 优先使用业务日期字段（工作日志的 date、返校记录的 return_date），
+ * 否则回退到 created_at，最后回退到空串（交由 id 兜底）。
+ */
+function timeKey(item) {
+  return item?.date || item?.return_date || item?.created_at || ''
+}
+
 export function useSort(moduleKey) {
   const order = ref(prefs[moduleKey] || 'desc')
 
@@ -26,10 +35,15 @@ export function useSort(moduleKey) {
 
   function sortItems(items) {
     if (!items || !items.length) return items
+    const dir = order.value === 'asc' ? 1 : -1
     return [...items].sort((a, b) => {
-      const ta = a.created_at || a.date || String(a.id || '')
-      const tb = b.created_at || b.date || String(b.id || '')
-      return order.value === 'asc' ? String(ta).localeCompare(String(tb)) : String(tb).localeCompare(String(ta))
+      const ta = timeKey(a)
+      const tb = timeKey(b)
+      let cmp = String(ta).localeCompare(String(tb))
+      if (cmp !== 0) return cmp * dir
+      // 时间相同（例如批量写入时 created_at 同秒）时用 id 兜底，
+      // 保证「最新在前/最早在前」切换必然产生可见变化。
+      return (Number(a.id ?? 0) - Number(b.id ?? 0)) * dir
     })
   }
 

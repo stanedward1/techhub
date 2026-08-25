@@ -26,33 +26,80 @@
         </div>
       </div>
 
-      <!-- 寄宿/通学变更历史 -->
-      <div class="page-card" v-if="boardHistory.length">
-        <h3 class="card-title">住宿状态变更记录</h3>
-        <el-timeline>
-          <el-timeline-item
-            v-for="h in boardHistory"
-            :key="h.id"
-            :timestamp="h.created_at"
-          >
-            <el-tag :type="h.old_type === 'day' ? 'info' : 'warning'" size="small">
-              {{ h.old_label }}
-            </el-tag>
-            <el-icon style="margin: 0 6px; vertical-align: middle;"><Right /></el-icon>
-            <el-tag :type="h.new_type === 'day' ? 'info' : 'warning'" size="small">
-              {{ h.new_label }}
-            </el-tag>
-            <span v-if="h.changed_by_name" style="color: #9ca3af; font-size: 12px; margin-left: 8px;">
-              操作人：{{ h.changed_by_name }}
-            </span>
-          </el-timeline-item>
-        </el-timeline>
+      <!-- 寄宿/通学状态动态展示 -->
+      <div class="page-card">
+        <h3 class="card-title">住宿状态（寄宿/通学）</h3>
+        <div class="board-current" v-if="boardCurrent">
+          <span class="board-current-label">当前状态</span>
+          <el-tag :type="boardCurrent.type === 'day' ? 'info' : 'warning'" size="large">{{ boardCurrent.label }}</el-tag>
+          <span class="board-current-since">自 {{ boardCurrent.since }} 起</span>
+        </div>
+
+        <!-- 各时间段（含起始/结束时间） -->
+        <el-table v-if="boardPeriods.length" :data="boardPeriods" size="small" style="width: 100%">
+          <el-table-column label="住宿类型" width="110">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.type === 'day' ? 'info' : 'warning'">{{ row.label }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="起始时间" min-width="160">
+            <template #default="{ row }">{{ row.start || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="结束时间" min-width="160">
+            <template #default="{ row }">
+              <span :style="{ color: row.end ? '#374151' : '#2563eb', fontWeight: row.end ? 400 : 600 }">
+                {{ row.end || '至今' }}
+              </span>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <!-- 状态变更记录 -->
+        <template v-if="boardHistory.length">
+          <div class="board-section-title">状态变更记录</div>
+          <el-timeline>
+            <el-timeline-item v-for="h in boardHistory" :key="h.id" :timestamp="h.changed_at || h.created_at">
+              <el-tag :type="h.old_type === 'day' ? 'info' : 'warning'" size="small">{{ h.old_label }}</el-tag>
+              <el-icon style="margin: 0 6px; vertical-align: middle;"><Right /></el-icon>
+              <el-tag :type="h.new_type === 'day' ? 'info' : 'warning'" size="small">{{ h.new_label }}</el-tag>
+              <span v-if="h.changed_by_name" style="color: #9ca3af; font-size: 12px; margin-left: 8px;">操作人：{{ h.changed_by_name }}</span>
+            </el-timeline-item>
+          </el-timeline>
+        </template>
+        <div v-else-if="!boardPeriods.length" class="empty-state">暂无住宿状态记录</div>
       </div>
 
       <!-- 雷达图 -->
       <div class="page-card">
         <h3 class="card-title">综合评价雷达</h3>
         <div ref="radarRef" style="width: 100%; height: 340px;"></div>
+
+        <!-- 各维度评价依据说明 -->
+        <div class="radar-basis">
+          <div class="basis-title">各维度评分依据说明</div>
+          <div class="basis-grid">
+            <div class="basis-item" v-for="d in radarBasis" :key="d.key">
+              <div class="basis-item-head">
+                <span class="basis-name">{{ d.name }}</span>
+                <span class="basis-score">{{ d.score }} 分</span>
+              </div>
+              <div class="basis-row">
+                <span class="basis-label">数据来源</span>
+                <span class="basis-text">{{ d.source }}</span>
+              </div>
+              <div class="basis-row">
+                <span class="basis-label">计算方法</span>
+                <span class="basis-text">{{ d.method }}</span>
+              </div>
+              <div class="basis-row">
+                <span class="basis-label">相关指标</span>
+                <div class="basis-indicators">
+                  <el-tag v-for="(t, i) in d.indicators" :key="i" size="small" effect="plain" type="info">{{ t }}</el-tag>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 数据概览 -->
@@ -143,6 +190,8 @@ const route = useRoute()
 const profile = ref(null)
 const loading = ref(true)
 const boardHistory = ref([])
+const boardCurrent = ref(null)
+const boardPeriods = ref([])
 const radarRef = ref(null)
 const trendRef = ref(null)
 let radarChart = null
@@ -153,6 +202,8 @@ const tagSaving = ref(false)
 const tagForm = reactive({ tag: '', category: '自定义' })
 
 const hasTrend = computed(() => profile.value?.score_summary?.trend?.length > 0)
+
+const radarBasis = computed(() => profile.value?.radar_basis || [])
 
 const summaryCards = computed(() => {
   if (!profile.value) return []
@@ -177,6 +228,8 @@ onMounted(async () => {
     profile.value = await studentApi.profile(route.params.id)
     const h = await studentApi.boardHistory(route.params.id)
     boardHistory.value = h.items || []
+    boardCurrent.value = h.current || null
+    boardPeriods.value = h.periods || []
   } catch (e) {
   } finally {
     loading.value = false
@@ -288,4 +341,25 @@ async function removeTag(tag) {
 .stat-mini { padding: 12px; border-radius: var(--radius-md); background: #f8fafc; margin-bottom: 12px; text-align: center; }
 .stat-mini-value { font-size: 22px; font-weight: 700; }
 .stat-mini-label { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+
+/* 雷达图评价依据 */
+.radar-basis { margin-top: 16px; border-top: 1px solid #eef1f6; padding-top: 16px; }
+.basis-title { font-weight: 600; font-size: 14px; color: #111827; margin-bottom: 12px; }
+.basis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.basis-item { background: #f8fafc; border-radius: 10px; padding: 12px 14px; }
+.basis-item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.basis-name { font-weight: 600; color: #2563eb; font-size: 14px; }
+.basis-score { font-weight: 700; color: #2563eb; font-size: 13px; }
+.basis-row { display: flex; margin-bottom: 6px; font-size: 13px; color: #374151; line-height: 1.6; }
+.basis-row:last-child { margin-bottom: 0; }
+.basis-label { flex-shrink: 0; width: 60px; color: #9ca3af; font-size: 12px; padding-top: 1px; }
+.basis-text { flex: 1; }
+.basis-indicators { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 900px) { .basis-grid { grid-template-columns: 1fr; } }
+
+/* 住宿状态动态展示 */
+.board-current { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: linear-gradient(135deg, #eff6ff, #f5f3ff); border-radius: 10px; margin-bottom: 14px; }
+.board-current-label { color: #6b7280; font-size: 13px; }
+.board-current-since { color: #6b7280; font-size: 13px; margin-left: 4px; }
+.board-section-title { font-weight: 600; font-size: 14px; color: #111827; margin: 16px 0 10px; }
 </style>

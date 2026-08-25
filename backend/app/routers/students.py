@@ -349,25 +349,83 @@ def board_type_stats(class_id: int | None = None, _=Depends(admin_dep), db: Sess
     }
 
 
+def _board_label(t):
+    """住宿类型 -> 中文标签。"""
+    if t == "day":
+        return "通学生"
+    if t == "boarding":
+        return "寄宿生"
+    return "初始"
+
+
+def _fmt_dt(dt):
+    """datetime -> 展示用字符串，None 返回 None。"""
+    if dt is None:
+        return None
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 @router.get("/api/students/{student_id}/board-history")
 def get_board_history(student_id: int, _=Depends(admin_dep), db: Session = Depends(get_db)):
-    """获取学生寄宿/通学状态变更历史。"""
-    rows = (
+    """获取学生寄宿/通学状态：当前状态、各时间段（含起始/结束时间）与变更日志。"""
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="学生不存在")
+
+    changes = (
         db.query(StudentBoardHistory)
         .filter(StudentBoardHistory.student_id == student_id)
-        .order_by(StudentBoardHistory.created_at.desc())
+        .order_by(StudentBoardHistory.created_at.asc())
         .all()
     )
+
+    # 变更日志（倒序，最新在前）
     items = []
-    for r in rows:
+    for r in reversed(changes):
         d = to_dict(r)
-        d["old_label"] = "通学生" if r.old_type == "day" else "寄宿生" if r.old_type == "boarding" else "初始"
-        d["new_label"] = "通学生" if r.new_type == "day" else "寄宿生"
+        d["old_label"] = _board_label(r.old_type)
+        d["new_label"] = _board_label(r.new_type)
+        d["changed_at"] = _fmt_dt(r.created_at)
         if r.changed_by:
             u = db.get(User, r.changed_by)
             d["changed_by_name"] = u.name if u else ""
         items.append(d)
-    return {"items": items}
+
+    # 时间段（正序，从最早到当前，每段含起始/结束时间，最后一段 end=None 表示"至今"）
+    base_start = _fmt_dt(student.created_at) or "建档"
+    periods = []
+    if not changes:
+        periods.append({
+            "type": student.student_type,
+            "label": _board_label(student.student_type),
+            "start": base_start,
+            "end": None,
+        })
+    else:
+        # 首段：初始类型（首次变更前）
+        periods.append({
+            "type": changes[0].old_type,
+            "label": _board_label(changes[0].old_type),
+            "start": base_start,
+            "end": _fmt_dt(changes[0].created_at),
+        })
+        for i, r in enumerate(changes):
+            end = _fmt_dt(changes[i + 1].created_at) if i + 1 < len(changes) else None
+            periods.append({
+                "type": r.new_type,
+                "label": _board_label(r.new_type),
+                "start": _fmt_dt(r.created_at),
+                "end": end,
+            })
+
+    # 当前状态
+    current = {
+        "type": student.student_type,
+        "label": _board_label(student.student_type),
+        "since": _fmt_dt(changes[-1].created_at) if changes else base_start,
+    }
+
+    return {"current": current, "periods": periods, "items": items}
 
 
 @router.get("/api/students/export")

@@ -45,7 +45,13 @@
         <el-table-column prop="parent_phone" label="家长电话" width="130" />
         <el-table-column label="类型" width="90">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.student_type === 'day' ? 'info' : 'warning'">
+            <el-tag
+              size="small"
+              :type="row.student_type === 'day' ? 'info' : 'warning'"
+              style="cursor: pointer"
+              title="点击查看住宿状态变更历史"
+              @click="openBoardHistory(row)"
+            >
               {{ row.student_type === 'day' ? '通学生' : '寄宿生' }}
             </el-tag>
           </template>
@@ -130,6 +136,62 @@
       </el-form>
     </el-dialog>
 
+    <!-- 寄宿/通学状态动态展示弹窗 -->
+    <el-dialog v-model="boardDialog" :title="`住宿状态记录 - ${boardStudent?.name || ''}`" width="620px">
+      <div v-loading="boardLoading">
+        <template v-if="boardData">
+          <!-- 当前状态 -->
+          <div class="board-current">
+            <span class="board-current-label">当前状态</span>
+            <el-tag :type="boardData.current.type === 'day' ? 'info' : 'warning'" size="large">
+              {{ boardData.current.label }}
+            </el-tag>
+            <span class="board-current-since">自 {{ boardData.current.since }} 起</span>
+          </div>
+
+          <!-- 各时间段（含起始/结束时间） -->
+          <div class="board-section-title">住宿时间段历史</div>
+          <el-table :data="boardData.periods" size="small" style="width: 100%">
+            <el-table-column label="住宿类型" width="110">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.type === 'day' ? 'info' : 'warning'">{{ row.label }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="起始时间" min-width="160">
+              <template #default="{ row }">{{ row.start || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="结束时间" min-width="160">
+              <template #default="{ row }">
+                <span :style="{ color: row.end ? '#374151' : '#2563eb', fontWeight: row.end ? 400 : 600 }">
+                  {{ row.end || '至今' }}
+                </span>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <!-- 变更日志 -->
+          <template v-if="boardData.items.length">
+            <div class="board-section-title">状态变更记录</div>
+            <el-timeline>
+              <el-timeline-item
+                v-for="h in boardData.items"
+                :key="h.id"
+                :timestamp="h.changed_at || h.created_at"
+              >
+                <el-tag :type="h.old_type === 'day' ? 'info' : 'warning'" size="small">{{ h.old_label }}</el-tag>
+                <el-icon style="margin: 0 6px; vertical-align: middle;"><Right /></el-icon>
+                <el-tag :type="h.new_type === 'day' ? 'info' : 'warning'" size="small">{{ h.new_label }}</el-tag>
+                <span v-if="h.changed_by_name" style="color: #9ca3af; font-size: 12px; margin-left: 8px;">
+                  操作人：{{ h.changed_by_name }}
+                </span>
+              </el-timeline-item>
+            </el-timeline>
+          </template>
+          <div v-else class="empty-state" style="padding: 12px 0;">暂无状态变更记录</div>
+        </template>
+      </div>
+    </el-dialog>
+
     <!-- 批量导入学生弹窗 -->
     <el-dialog v-model="importDialog" title="批量导入学生" width="560px" @close="resetImport">
       <el-form label-width="80px">
@@ -211,6 +273,12 @@ const pwdDialog = ref(false)
 const pwdTarget = ref(null)
 const pwdSaving = ref(false)
 const pwdForm = reactive({ password: '' })
+
+// 寄宿/通学状态动态展示
+const boardDialog = ref(false)
+const boardLoading = ref(false)
+const boardStudent = ref(null)
+const boardData = ref(null)
 
 // 批量导入
 const importDialog = ref(false)
@@ -405,6 +473,20 @@ async function modifyPassword() {
   }
 }
 
+// 寄宿/通学状态动态展示：加载历史并打开弹窗
+async function openBoardHistory(row) {
+  boardStudent.value = row
+  boardData.value = null
+  boardDialog.value = true
+  boardLoading.value = true
+  try {
+    boardData.value = await studentApi.boardHistory(row.id)
+  } catch (e) {
+  } finally {
+    boardLoading.value = false
+  }
+}
+
 // 批量导入
 function downloadTemplate() {
   studentApi.template().then(res => {
@@ -516,5 +598,31 @@ async function handleStudentAvatar(options, row) {
   color: #dc2626;
   line-height: 1.8;
   padding: 2px 0;
+}
+
+/* 寄宿/通学状态动态展示 */
+.board-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #eff6ff, #f5f3ff);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+.board-current-label {
+  color: #6b7280;
+  font-size: 13px;
+}
+.board-current-since {
+  color: #6b7280;
+  font-size: 13px;
+  margin-left: 4px;
+}
+.board-section-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #111827;
+  margin: 16px 0 10px;
 }
 </style>
