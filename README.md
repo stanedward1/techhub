@@ -193,6 +193,11 @@ docker compose up -d --build
 > 首次启动自动执行数据库迁移，并在空库时生成演示数据（52 名学生、4 个班级等）。
 > **生产环境务必设置 `ENV=production` 与强随机 `SECRET_KEY`**，否则后端会拒绝启动。
 
+**切换 MySQL**（可选）：`docker-compose.yml` 中已内置注释掉的 `mysql` 服务与连接串示例，按注释说明三步即可切换：
+1. 取消末尾 `mysql` 服务整段注释（自动创建 `techhub` 库）
+2. 将 `backend` 的 `DATABASE_URL` 改为 `mysql+pymysql://techhub:techhub123456@mysql:3306/techhub?charset=utf8mb4`
+3. 取消 `backend` 的 `depends_on: mysql` 注释，让后端等待 MySQL 就绪
+
 常用命令：
 
 ```bash

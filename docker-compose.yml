@@ -4,8 +4,15 @@ services:
     container_name: techhub-backend
     restart: unless-stopped
     environment:
-      # 数据库：默认 SQLite（持久化到数据卷），可改为 MySQL/PostgreSQL 连接串
+      # ---- 数据库：默认 SQLite（持久化到数据卷）----
       DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/techhub.db}
+
+      # ---- 切换 MySQL 示例（取消下行注释，并注释掉上面的 SQLite 行）----
+      #   1. 取消本文件末尾 mysql 服务的注释（或使用自建 MySQL）
+      #   2. 取消下方 depends_on: mysql 的注释，让后端等待 MySQL 就绪
+      #   3. 连接串格式：mysql+pymysql://用户:密码@主机:3306/库名?charset=utf8mb4
+      # DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://techhub:techhub123456@mysql:3306/techhub?charset=utf8mb4}
+
       ENV: ${ENV:-development}
       SECRET_KEY: ${SECRET_KEY:-techhub-dev-secret-key}
       ALGORITHM: HS256
@@ -15,6 +22,10 @@ services:
     volumes:
       - techhub-data:/app/data
       - techhub-uploads:/app/uploads
+    # ---- 使用 MySQL 时取消下行注释，等待 MySQL 健康后再启动后端 ----
+    # depends_on:
+    #   mysql:
+    #     condition: service_healthy
     expose:
       - "8080"
     healthcheck:
@@ -33,6 +44,37 @@ services:
     depends_on:
       - backend
 
+  # =====================================================================
+  # 可选：MySQL 数据库服务
+  # 如需切换 MySQL（替代默认的 SQLite），取消以下 mysql 服务整段注释，
+  # 并同步修改上方 backend 的 DATABASE_URL 与 depends_on。
+  # =====================================================================
+  # mysql:
+  #   image: mysql:8.0
+  #   container_name: techhub-mysql
+  #   restart: unless-stopped
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-techhub123456}
+  #     MYSQL_DATABASE: techhub
+  #     MYSQL_USER: techhub
+  #     MYSQL_PASSWORD: ${MYSQL_PASSWORD:-techhub123456}
+  #     TZ: Asia/Shanghai
+  #   command:
+  #     - --character-set-server=utf8mb4
+  #     - --collation-server=utf8mb4_unicode_ci
+  #   ports:
+  #     - "${MYSQL_PORT:-3306}:3306"
+  #   volumes:
+  #     - mysql-data:/var/lib/mysql
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p$$MYSQL_ROOT_PASSWORD"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+  #     start_period: 30s
+
 volumes:
   techhub-data:
   techhub-uploads:
+  # 使用 MySQL 时取消下行注释
+  # mysql-data:
