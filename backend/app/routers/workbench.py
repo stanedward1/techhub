@@ -104,7 +104,7 @@ def create_score(payload: dict, user: User = Depends(get_current_user), db: Sess
         exam_name=payload.get("exam_name"),
     )
     db.add(s)
-    audit(db, user, "create_score", target=f"新增成绩-{student_name(db, s.student_id)}", detail=f"科目：{s.subject}；分数：{s.score}；考试：{s.exam_name or '日常测验'}")
+    audit(db, user, "create_score", target=f"新增成绩-{student_name(db, s.student_id)}", student_id=s.student_id, detail=f"科目：{s.subject}；分数：{s.score}；考试：{s.exam_name or '日常测验'}")
     db.commit()
     db.refresh(s)
     return attach_student(db, to_dict(s), s.student_id)
@@ -129,7 +129,7 @@ def update_score(score_id: int, payload: dict, user: User = Depends(get_current_
             if f == "student_id" and payload["student_id"] != s.student_id:
                 ensure_student_operable(db, payload["student_id"])
             setattr(s, f, payload[f])
-    audit(db, user, "update_score", target=f"成绩#{score_id}-{student_name(db, s.student_id)}")
+    audit(db, user, "update_score", target=f"成绩#{score_id}-{student_name(db, s.student_id)}", student_id=s.student_id)
     db.commit()
     db.refresh(s)
     return attach_student(db, to_dict(s), s.student_id)
@@ -145,7 +145,7 @@ def delete_score(score_id: int, user: User = Depends(get_current_user), db: Sess
         if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, s.student_id):
             raise HTTPException(status_code=403, detail="无权删除该成绩")
         db.delete(s)
-        audit(db, user, "delete_score", target=f"成绩#{score_id}-{student_name(db, s.student_id)}")
+        audit(db, user, "delete_score", target=f"成绩#{score_id}-{student_name(db, s.student_id)}", student_id=s.student_id)
         db.commit()
     return {"ok": True}
 
@@ -246,7 +246,7 @@ def create_leave(payload: dict, user: User = Depends(get_current_user), db: Sess
         image=payload.get("image"),
     )
     db.add(x)
-    audit(db, user, "create_leave", target=f"新增请假-{student_name(db, x.student_id)}", detail=f"事由：{x.reason or '未填写'}；时间：{x.start_date or ''} ~ {x.end_date or ''}")
+    audit(db, user, "create_leave", target=f"新增请假-{student_name(db, x.student_id)}", student_id=x.student_id, detail=f"事由：{x.reason or '未填写'}；时间：{x.start_date or ''} ~ {x.end_date or ''}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -265,7 +265,7 @@ def update_leave(leave_id: int, payload: dict, user: User = Depends(get_current_
     for f in ("reason", "start_date", "end_date", "status", "image"):
         if f in payload and payload[f] is not None:
             setattr(x, f, payload[f])
-    audit(db, user, "update_leave", target=f"请假#{leave_id}-{student_name(db, x.student_id)}", detail=f"事由：{x.reason or '未填写'}；时间：{x.start_date or ''} ~ {x.end_date or ''}")
+    audit(db, user, "update_leave", target=f"请假#{leave_id}-{student_name(db, x.student_id)}", student_id=x.student_id, detail=f"事由：{x.reason or '未填写'}；时间：{x.start_date or ''} ~ {x.end_date or ''}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -281,7 +281,7 @@ def delete_leave(leave_id: int, user: User = Depends(get_current_user), db: Sess
         if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, x.student_id):
             raise HTTPException(status_code=403, detail="无权删除该请假")
         db.delete(x)
-        audit(db, user, "delete_leave", target=f"请假#{leave_id}-{student_name(db, x.student_id)}", detail=f"事由：{x.reason or '未填写'}")
+        audit(db, user, "delete_leave", target=f"请假#{leave_id}-{student_name(db, x.student_id)}", student_id=x.student_id, detail=f"事由：{x.reason or '未填写'}")
         db.commit()
     return {"ok": True}
 
@@ -329,7 +329,7 @@ def create_point(payload: dict, user: User = Depends(get_current_user), db: Sess
         reason=payload.get("reason"),
     )
     db.add(x)
-    audit(db, user, "create_point", target=f"新增积分-{student_name(db, x.student_id)}", detail=f"积分：{x.points}分；原因：{x.reason or ''}")
+    audit(db, user, "create_point", target=f"新增积分-{student_name(db, x.student_id)}", student_id=x.student_id, detail=f"积分：{x.points}分；原因：{x.reason or ''}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -345,7 +345,7 @@ def delete_point(point_id: int, user: User = Depends(get_current_user), db: Sess
         if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, x.student_id):
             raise HTTPException(status_code=403, detail="无权删除该积分")
         db.delete(x)
-        audit(db, user, "delete_point", target=f"积分#{point_id}-{student_name(db, x.student_id)}")
+        audit(db, user, "delete_point", target=f"积分#{point_id}-{student_name(db, x.student_id)}", student_id=x.student_id)
         db.commit()
     return {"ok": True}
 
@@ -394,7 +394,7 @@ def create_communication(payload: dict, user: User = Depends(get_current_user), 
         feedback=payload.get("feedback"),
     )
     db.add(x)
-    audit(db, user, "create_communication", target=f"新增沟通-{student_name(db, x.student_id)}", detail=f"方式：{x.method or ''}；内容：{(x.content or '')[:50]}")
+    audit(db, user, "create_communication", target=f"新增沟通-{student_name(db, x.student_id)}", student_id=x.student_id, detail=f"方式：{x.method or ''}；内容：{(x.content or '')[:50]}")
     db.commit()
     db.refresh(x)
     return attach_student(db, to_dict(x), x.student_id)
@@ -410,7 +410,7 @@ def delete_communication(communication_id: int, user: User = Depends(get_current
         if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, x.student_id):
             raise HTTPException(status_code=403, detail="无权删除该沟通")
         db.delete(x)
-        audit(db, user, "delete_communication", target=f"沟通#{communication_id}-{student_name(db, x.student_id)}")
+        audit(db, user, "delete_communication", target=f"沟通#{communication_id}-{student_name(db, x.student_id)}", student_id=x.student_id)
         db.commit()
     return {"ok": True}
 
@@ -1100,7 +1100,7 @@ def add_student_tag(student_id: int, payload: dict, user: User = Depends(get_cur
         category=payload.get("category", "自定义"),
     )
     db.add(t)
-    audit(db, user, "add_student_tag", target=f"标签-{student_name(db, student_id)}")
+    audit(db, user, "add_student_tag", target=f"标签-{student_name(db, student_id)}", student_id=student_id)
     db.commit()
     db.refresh(t)
     return to_dict(t)
@@ -1116,7 +1116,7 @@ def remove_student_tag(student_id: int, tag_id: int, user: User = Depends(get_cu
     t = db.get(StudentProfileTag, tag_id)
     if t and t.student_id == student_id:
         db.delete(t)
-        audit(db, user, "remove_student_tag", target=f"标签#{tag_id}-{student_name(db, student_id)}")
+        audit(db, user, "remove_student_tag", target=f"标签#{tag_id}-{student_name(db, student_id)}", student_id=student_id)
         db.commit()
     return {"ok": True}
 

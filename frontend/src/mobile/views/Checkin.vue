@@ -6,6 +6,7 @@
 
     <van-cell-group inset style="margin-top: 8px">
       <van-field :model-value="date" readonly is-link label="日期" placeholder="选择日期" @click="showCalendar = true" />
+      <van-cell title="出勤率统计" is-link icon="bar-chart-o" @click="$router.push('/m/attendance-stats')" />
     </van-cell-group>
 
     <!-- 状态统计 -->

@@ -6,8 +6,11 @@ from sqlalchemy.orm import Session
 from app.audit import audit
 from app.database import get_db
 from app.deps import get_current_user, require_teacher
+from app.permissions import get_teacher_class_ids
 from app.models import (
     Assignment,
+    Attendance,
+    ClassTeacher,
     Classroom,
     Communication,
     Exam,
@@ -34,6 +37,18 @@ def _user_out(db: Session, u: User) -> dict:
     d.pop("password_hash", None)
     cls = db.get(Classroom, u.class_id) if u.class_id else None
     d["class_name"] = cls.name if cls else None
+    # 教师：返回班主任/科任班级，用于列表与看板身份标识
+    if u.role == "teacher":
+        head_classes = db.query(Classroom).filter(Classroom.teacher_id == u.id).all()
+        subject_ids = [
+            ct.class_id
+            for ct in db.query(ClassTeacher).filter(ClassTeacher.teacher_id == u.id).all()
+        ]
+        subject_classes = (
+            db.query(Classroom).filter(Classroom.id.in_(subject_ids)).all() if subject_ids else []
+        )
+        d["head_classes"] = [c.name for c in head_classes]
+        d["subject_classes"] = [c.name for c in subject_classes]
     return d
 
 
@@ -174,15 +189,28 @@ def upgrade_grade(user=Depends(admin_dep), db: Session = Depends(get_db)):
     return {"upgraded": upgraded}
 
 
-# ---------------- 审计日志 ----------------（仅管理员）
+# ---------------- 审计日志 ----------------
+def _visible_audit_class_ids(db: Session, user: User):
+    """返回可查看审计日志的班级范围。
+
+    - admin：返回 None（查看全部）
+    - 班主任：返回其班主任班级 id 列表
+    - 科任老师（非任何班班主任）：返回空列表（无权查看）
+    """
+    if user.role == "admin":
+        return None
+    return [c.id for c in db.query(Classroom).filter(Classroom.teacher_id == user.id).all()]
+
+
 @router.get("/api/admin/audit-logs/actions")
 def list_audit_log_actions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """返回所有出现过的操作类型（去重，供前端下拉框动态展示）。"""
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="仅管理员可查看审计日志")
+    class_ids = _visible_audit_class_ids(db, user)
+    if class_ids == []:
+        raise HTTPException(status_code=403, detail="仅班主任或管理员可查看审计日志")
     rows = db.query(OperationLog.action).distinct().order_by(OperationLog.action).all()
     return {"items": [r[0] for r in rows]}
 
@@ -197,10 +225,13 @@ def list_audit_logs(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """查询操作审计日志（仅管理员）。支持按操作类型、关键字、日期（某日）筛选。"""
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="仅管理员可查看审计日志")
+    """查询操作审计日志。管理员看全部；班主任看自己班级；科任老师不可见。"""
+    class_ids = _visible_audit_class_ids(db, user)
+    if class_ids == []:
+        raise HTTPException(status_code=403, detail="仅班主任或管理员可查看审计日志")
     q = db.query(OperationLog)
+    if class_ids is not None:
+        q = q.filter(OperationLog.class_id.in_(class_ids))
     if action:
         q = q.filter(OperationLog.action == action)
     if keyword:
@@ -229,8 +260,9 @@ def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
     # 教师只能查看自己负责班级的数据；管理员查看全校。
     # 均排除毕业班级与退学学生（看板不展示）。
     if user.role != "admin":
+        teacher_class_ids = get_teacher_class_ids(db, user.id)
         class_ids = [c.id for c in db.query(Classroom).filter(
-            Classroom.teacher_id == user.id, Classroom.is_graduated.is_(False)
+            Classroom.id.in_(teacher_class_ids), Classroom.is_graduated.is_(False)
         ).all()]
         student_ids = []
         if class_ids:
@@ -354,7 +386,74 @@ def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
             }
         )
 
+    # 近 7 天出勤统计
+    att_start = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
+    att_records = []
+    if class_ids:
+        att_records = db.query(Attendance).filter(
+            Attendance.class_id.in_(class_ids),
+            Attendance.date >= att_start,
+            Attendance.date <= today,
+        ).all()
+    att_status = {"出勤": 0, "缺勤": 0, "请假": 0, "迟到": 0}
+    att_trend_map = {}
+    att_by_class_map = {}
+    for r in att_records:
+        if r.status in att_status:
+            att_status[r.status] += 1
+        day = att_trend_map.setdefault(r.date, {"出勤": 0, "缺勤": 0, "请假": 0, "迟到": 0})
+        if r.status in day:
+            day[r.status] += 1
+        c = att_by_class_map.setdefault(r.class_id, {"出勤": 0, "缺勤": 0, "请假": 0, "迟到": 0})
+        if r.status in c:
+            c[r.status] += 1
+    att_total = sum(att_status.values())
+    # 遍历所有班级（含无考勤记录的班），确保管理员能看到每个班
+    att_by_class = []
+    for cid in class_ids:
+        cls = db.get(Classroom, cid)
+        st = att_by_class_map.get(cid, {"出勤": 0, "缺勤": 0, "请假": 0, "迟到": 0})
+        total_n = sum(st.values())
+        att_by_class.append(
+            {
+                "class_id": cid,
+                "class_name": cls.name if cls else "",
+                "rate": round(st["出勤"] / total_n * 100, 1) if total_n else 0,
+                "total": total_n,
+                "status": st,
+            }
+        )
+    att_by_class.sort(key=lambda x: x["class_id"])
+    attendance = {
+        "rate": round(att_status["出勤"] / att_total * 100, 1) if att_total else 0,
+        "status": att_status,
+        "total": att_total,
+        "trend": [
+            {
+                "date": d[5:],
+                "rate": round(day["出勤"] / sum(day.values()) * 100, 1) if sum(day.values()) else 0,
+            }
+            for d, day in sorted(att_trend_map.items())
+        ],
+        "by_class": att_by_class,
+    }
+
+    # 当前教师身份（班主任/科任班级），用于看板专属标识
+    if user.role == "teacher":
+        head_classes = [c.name for c in db.query(Classroom).filter(Classroom.teacher_id == user.id).all()]
+        subject_ids = [ct.class_id for ct in db.query(ClassTeacher).filter(ClassTeacher.teacher_id == user.id).all()]
+        subject_classes = (
+            [c.name for c in db.query(Classroom).filter(Classroom.id.in_(subject_ids)).all()]
+            if subject_ids else []
+        )
+    else:
+        head_classes = []
+        subject_classes = []
+    identity = {"head_classes": head_classes, "subject_classes": subject_classes}
+
     return {
+        "identity": identity,
+        "attendance": attendance,
         "counts": {
             "student": student_count,
             "class": class_count,

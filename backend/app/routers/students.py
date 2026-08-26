@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user
 from app.audit import audit
-from app.models import Classroom, School, Student, StudentBoardHistory, User
+from app.models import Classroom, ClassTeacher, School, Student, StudentBoardHistory, User
 from app.security import hash_password
 from app.utils import to_dict
 from app.permissions import (
@@ -20,6 +20,7 @@ from app.permissions import (
     filter_students_by_teacher,
     ensure_student_operable,
     ensure_class_operable,
+    get_teacher_class_ids,
 )
 
 router = APIRouter(tags=["基础数据"])
@@ -151,8 +152,8 @@ def update_classroom(class_id: int, payload: dict, user: User = Depends(get_curr
     c = db.get(Classroom, class_id)
     if not c:
         raise HTTPException(status_code=404, detail="班级不存在")
-    # 教师只能修改自己负责的班级
-    if user.role != "admin" and c.teacher_id != user.id:
+    # 教师只能修改自己可操作的班级（班主任或科任）
+    if user.role != "admin" and not is_teacher_class_owner(db, user.id, class_id):
         raise HTTPException(status_code=403, detail="无权修改该班级")
     # 教师不能修改班级对应的教师
     if user.role != "admin" and "teacher_id" in payload and payload["teacher_id"] is not None:
@@ -178,6 +179,70 @@ def delete_classroom(class_id: int, user: User = Depends(get_current_user), db: 
     if c:
         db.delete(c)
         audit(db, user, "delete_classroom", target=f"班级#{class_id}")
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------- 班级教师（班主任 + 科任） ----------------
+@router.get("/api/classrooms/{class_id}/teachers")
+def list_class_teachers(class_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """查看班级的教师（班主任 + 科任老师）。"""
+    c = db.get(Classroom, class_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="班级不存在")
+    if user.role != "admin" and not is_teacher_class_owner(db, user.id, class_id):
+        raise HTTPException(status_code=403, detail="无权查看该班级教师")
+    teachers = []
+    if c.teacher_id:
+        head = db.get(User, c.teacher_id)
+        if head:
+            teachers.append(
+                {"teacher_id": head.id, "name": head.name, "username": head.username, "is_head": True}
+            )
+    for ct in db.query(ClassTeacher).filter(ClassTeacher.class_id == class_id).all():
+        t = db.get(User, ct.teacher_id)
+        if t:
+            teachers.append(
+                {"teacher_id": t.id, "name": t.name, "username": t.username, "is_head": False}
+            )
+    return {"items": teachers}
+
+
+@router.post("/api/classrooms/{class_id}/teachers")
+def add_class_teacher(class_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """添加科任老师（仅管理员）。"""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="只有管理员可以配置科任老师")
+    c = db.get(Classroom, class_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="班级不存在")
+    teacher_id = payload.get("teacher_id")
+    t = db.get(User, teacher_id)
+    if not t or t.role != "teacher":
+        raise HTTPException(status_code=400, detail="所选教师不存在或不是教师角色")
+    if c.teacher_id == teacher_id:
+        raise HTTPException(status_code=400, detail="该教师已是班主任")
+    if db.query(ClassTeacher).filter(
+        ClassTeacher.class_id == class_id, ClassTeacher.teacher_id == teacher_id
+    ).first():
+        raise HTTPException(status_code=400, detail="该教师已是科任老师")
+    db.add(ClassTeacher(class_id=class_id, teacher_id=teacher_id))
+    audit(db, user, "add_class_teacher", target=f"班级#{class_id}-新增科任老师#{teacher_id}", class_id=class_id)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/classrooms/{class_id}/teachers/{teacher_id}")
+def remove_class_teacher(class_id: int, teacher_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """移除科任老师（仅管理员）。"""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="只有管理员可以配置科任老师")
+    ct = db.query(ClassTeacher).filter(
+        ClassTeacher.class_id == class_id, ClassTeacher.teacher_id == teacher_id
+    ).first()
+    if ct:
+        db.delete(ct)
+        audit(db, user, "remove_class_teacher", target=f"班级#{class_id}-移除科任老师#{teacher_id}", class_id=class_id)
         db.commit()
     return {"ok": True}
 
@@ -263,7 +328,7 @@ def create_student(payload: dict, user: User = Depends(get_current_user), db: Se
                 class_id=class_id,
             )
         )
-    audit(db, user, "create_student", target=f"新增学生-{s.name} ({s.student_no})")
+    audit(db, user, "create_student", target=f"新增学生-{s.name} ({s.student_no})", student_id=s.id)
     db.commit()
     db.refresh(s)
     return _student_out(db, s)
@@ -302,7 +367,7 @@ def update_student(student_id: int, payload: dict, user: User = Depends(get_curr
             new_type=new_type,
             changed_by=user.id,
         ))
-    audit(db, user, "update_student", target=f"学生#{student_id}-{s.name}")
+    audit(db, user, "update_student", target=f"学生#{student_id}-{s.name}", student_id=student_id)
     db.commit()
     db.refresh(s)
     return _student_out(db, s)
@@ -319,7 +384,7 @@ def delete_student(student_id: int, user: User = Depends(get_current_user), db: 
     # 退学/毕业限制
     ensure_student_operable(db, student_id)
     db.delete(s)
-    audit(db, user, "delete_student", target=f"学生#{student_id}")
+    audit(db, user, "delete_student", target=f"学生#{student_id}", student_id=student_id)
     db.commit()
     return {"ok": True}
 
@@ -351,7 +416,7 @@ def reset_student_password(student_id: int, payload: dict, user: User = Depends(
         db.add(u)
     else:
         u.password_hash = hash_password(new_pwd)
-    audit(db, user, "reset_student_password", target=f"{s.name} ({s.student_no})")
+    audit(db, user, "reset_student_password", target=f"{s.name} ({s.student_no})", student_id=student_id)
     db.commit()
     return {"ok": True}
 
@@ -416,12 +481,13 @@ async def upload_student_avatar(
         raise
 
     if student_user.avatar:
-        old_path = student_user.avatar.replace("/uploads/", "")
-        if os.path.exists(old_path):
-            os.remove(old_path)
+        old_name = student_user.avatar.rsplit("/", 1)[-1]
+        old_full = os.path.join(_AVATAR_DIR, old_name)
+        if os.path.exists(old_full):
+            os.remove(old_full)
 
     student_user.avatar = f"/uploads/avatars/{name}"
-    audit(db, user, "upload_student_avatar", target=f"{s.name} ({s.student_no})")
+    audit(db, user, "upload_student_avatar", target=f"{s.name} ({s.student_no})", student_id=student_id)
     db.commit()
     return {"avatar": student_user.avatar}
 
@@ -432,7 +498,6 @@ def board_type_stats(class_id: int | None = None, user: User = Depends(get_curre
     q = db.query(Student).filter(Student.is_dropped_out.is_(False))
     # 教师只能看自己负责班级
     if user.role != "admin":
-        from app.permissions import get_teacher_class_ids
         class_ids = get_teacher_class_ids(db, user.id)
         if class_ids:
             q = q.filter(Student.class_id.in_(class_ids))
@@ -531,7 +596,6 @@ def export_students(class_id: int | None = None, dropped_out: str = "", user: Us
     q = db.query(Student)
     # 教师只能导出自己负责班级的学生
     if user.role != "admin":
-        from app.permissions import get_teacher_class_ids
         class_ids = get_teacher_class_ids(db, user.id)
         if class_ids:
             q = q.filter(Student.class_id.in_(class_ids))

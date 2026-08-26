@@ -31,14 +31,9 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
         os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")
     )
-    # 数据库连接串：默认使用 SQLite（单文件，零配置）
-# 切换数据库只需修改此环境变量，无需改动代码：
-#   SQLite（默认）:    无需设置，自动使用 sqlite:///./techhub.db
-#   MySQL:             DATABASE_URL=mysql+pymysql://user:pass@localhost:3306/techhub?charset=utf8mb4
-#   PostgreSQL:        DATABASE_URL=postgresql://user:pass@localhost:5432/techhub
-#   pip install pymysql       # 纯 Python 实现，推荐
-#   DATABASE_URL=mysql+pymysql://用户名:密码@主机:3306/数据库名?charset=utf8mb4
-#   mysql -u root -p -e "CREATE DATABASE techhub CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    # 数据库连接串：默认 SQLite（单文件零配置），切换只需改此环境变量
+    #   MySQL:      mysql+pymysql://user:pass@localhost:3306/techhub?charset=utf8mb4
+    #   PostgreSQL: postgresql://user:pass@localhost:5432/techhub
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./techhub.db")
     UPLOAD_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
 

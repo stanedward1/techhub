@@ -15,7 +15,12 @@ from app.models import (
     User,
     WorkComment,
 )
-from app.permissions import ensure_class_operable, ensure_student_operable
+from app.permissions import (
+    ensure_class_operable,
+    ensure_student_operable,
+    get_teacher_class_ids,
+    is_teacher_class_owner,
+)
 from app.utils import to_dict
 
 router = APIRouter(prefix="/api/homework", tags=["作业提交平台"])
@@ -24,6 +29,14 @@ router = APIRouter(prefix="/api/homework", tags=["作业提交平台"])
 def _check_student_access(assignment: Assignment, user: User):
     if user.role == "student" and assignment.class_id != user.class_id:
         raise HTTPException(status_code=403, detail="无权访问该任务")
+
+
+def _check_teacher_assignment_access(db: Session, user: User, assignment: Assignment):
+    """教师只能访问自己负责班级的作业/提交，管理员不受限。"""
+    if assignment is None:
+        return
+    if user.role == "teacher" and not is_teacher_class_owner(db, user.id, assignment.class_id):
+        raise HTTPException(status_code=403, detail="无权访问其他班级的任务")
 
 
 def _ensure_submission_operable(db: Session, submission: Submission):
@@ -51,6 +64,9 @@ def list_assignments(
     q = db.query(Assignment)
     if user.role == "student":
         q = q.filter(Assignment.class_id == user.class_id)
+    elif user.role == "teacher":
+        # 教师只看自己负责班级的作业
+        q = q.filter(Assignment.class_id.in_(get_teacher_class_ids(db, user.id)))
     elif class_id:
         q = q.filter(Assignment.class_id == class_id)
 
@@ -86,6 +102,7 @@ def get_assignment(
     if not a:
         raise HTTPException(status_code=404, detail="任务不存在")
     _check_student_access(a, user)
+    _check_teacher_assignment_access(db, user, a)
     d = to_dict(a)
     cls = db.get(Classroom, a.class_id)
     creator = db.get(User, a.created_by)
@@ -105,6 +122,9 @@ def create_assignment(payload: dict, user: User = Depends(require_teacher), db: 
         raise HTTPException(status_code=400, detail="请选择下发班级")
     # 毕业限制：毕业班级不可再布置作业
     ensure_class_operable(db, class_id)
+    # 教师只能给自己负责的班级布置作业
+    if user.role != "admin" and not is_teacher_class_owner(db, user.id, class_id):
+        raise HTTPException(status_code=403, detail="只能给自己负责的班级布置作业")
 
     a = Assignment(
         title=title,
@@ -116,7 +136,7 @@ def create_assignment(payload: dict, user: User = Depends(require_teacher), db: 
         short_name=payload.get("short_name") or title,
     )
     db.add(a)
-    audit(db, user, "create_assignment", target=f"布置作业")
+    audit(db, user, "create_assignment", target=f"布置作业", class_id=class_id)
     db.commit()
     db.refresh(a)
     return to_dict(a)
@@ -138,7 +158,7 @@ def update_assignment(
         # 毕业限制：不可将作业转移到已毕业班级
         ensure_class_operable(db, payload["class_id"])
         a.class_id = payload["class_id"]
-    audit(db, user, "update_assignment", target=f"作业#{assignment_id}")
+    audit(db, user, "update_assignment", target=f"作业#{assignment_id}", class_id=a.class_id)
     db.commit()
     db.refresh(a)
     return to_dict(a)
@@ -154,7 +174,7 @@ def delete_assignment(
     if a.created_by != user.id and user.role != "admin":
         raise HTTPException(status_code=403, detail="只能删除自己创建的任务")
     db.delete(a)
-    audit(db, user, "delete_assignment", target=f"作业#{assignment_id}")
+    audit(db, user, "delete_assignment", target=f"作业#{assignment_id}", class_id=a.class_id)
     db.commit()
     return {"ok": True}
 
@@ -170,6 +190,7 @@ def list_submissions(
     if not a:
         raise HTTPException(status_code=404, detail="任务不存在")
     _check_student_access(a, user)
+    _check_teacher_assignment_access(db, user, a)
     q = db.query(Submission).filter(Submission.assignment_id == assignment_id)
     if user.role == "student":
         q = q.filter(Submission.student_id == user.id)
@@ -206,6 +227,7 @@ def get_submission(
         raise HTTPException(status_code=404, detail="提交不存在")
     a = db.get(Assignment, s.assignment_id)
     _check_student_access(a, user)
+    _check_teacher_assignment_access(db, user, a)
     if user.role == "student" and s.student_id != user.id:
         raise HTTPException(status_code=403, detail="无权查看该提交")
 
@@ -243,6 +265,8 @@ def add_submission_comment(
     s = db.get(Submission, submission_id)
     if not s:
         raise HTTPException(status_code=404, detail="提交不存在")
+    # 教师只能点评自己班级的提交
+    _check_teacher_assignment_access(db, user, db.get(Assignment, s.assignment_id))
     # 退学/毕业限制
     _ensure_submission_operable(db, s)
     content = (payload.get("content") or "").strip()
@@ -262,7 +286,7 @@ def add_submission_comment(
     db.add(c)
     stu = db.get(User, s.student_id)
     stu_name = stu.name if stu else ""
-    audit(db, user, "add_submission_comment", target=f"点评-{stu_name}")
+    audit(db, user, "add_submission_comment", target=f"点评-{stu_name}", student_id=s.student_id)
     db.commit()
     db.refresh(c)
     cd = to_dict(c)
@@ -283,14 +307,15 @@ def delete_submission_comment(
         raise HTTPException(status_code=404, detail="点评不存在")
     if user.role != "admin" and c.teacher_id != user.id:
         raise HTTPException(status_code=403, detail="无权删除该点评")
-    # 退学/毕业限制
+    # 退学/毕业限制 + 教师只能操作自己班级的提交
     s = db.get(Submission, submission_id)
     if s:
+        _check_teacher_assignment_access(db, user, db.get(Assignment, s.assignment_id))
         _ensure_submission_operable(db, s)
     db.delete(c)
     stu = db.get(User, s.student_id) if s else None
     stu_name = stu.name if stu else ""
-    audit(db, user, "delete_submission_comment", target=f"删除点评-{stu_name}")
+    audit(db, user, "delete_submission_comment", target=f"删除点评-{stu_name}", student_id=s.student_id)
     db.commit()
     return {"ok": True}
 
@@ -369,6 +394,8 @@ def mark_excellent(
     s = db.get(Submission, submission_id)
     if not s:
         raise HTTPException(status_code=404, detail="提交不存在")
+    # 教师只能评自己班级的提交为优秀
+    _check_teacher_assignment_access(db, user, db.get(Assignment, s.assignment_id))
     # 退学/毕业限制
     _ensure_submission_operable(db, s)
     existing = db.query(ExcellentWork).filter(ExcellentWork.submission_id == submission_id).first()
@@ -376,7 +403,7 @@ def mark_excellent(
         raise HTTPException(status_code=400, detail="该作品已入选优秀")
     e = ExcellentWork(submission_id=submission_id, selected_by=user.id, note=payload.get("note", ""))
     db.add(e)
-    audit(db, user, "mark_excellent", target=f"优秀-提交#{submission_id}")
+    audit(db, user, "mark_excellent", target=f"优秀-提交#{submission_id}", student_id=s.student_id)
     db.commit()
     db.refresh(e)
     return to_dict(e)
@@ -388,12 +415,13 @@ def unmark_excellent(
 ):
     e = db.query(ExcellentWork).filter(ExcellentWork.submission_id == submission_id).first()
     if e:
-        # 退学/毕业限制
+        # 教师只能操作自己班级的提交 + 退学/毕业限制
         s = db.get(Submission, submission_id)
         if s:
+            _check_teacher_assignment_access(db, user, db.get(Assignment, s.assignment_id))
             _ensure_submission_operable(db, s)
         db.delete(e)
-        audit(db, user, "unmark_excellent", target=f"取消优秀-提交#{submission_id}")
+        audit(db, user, "unmark_excellent", target=f"取消优秀-提交#{submission_id}", student_id=s.student_id if s else None)
         db.commit()
     return {"ok": True}
 
@@ -412,6 +440,13 @@ def list_excellent(
             q.join(Submission, ExcellentWork.submission_id == Submission.id)
             .join(Assignment, Submission.assignment_id == Assignment.id)
             .filter(Assignment.class_id == user.class_id)
+        )
+    elif user.role == "teacher":
+        # 教师仅查看自己班级的优秀作品
+        q = (
+            q.join(Submission, ExcellentWork.submission_id == Submission.id)
+            .join(Assignment, Submission.assignment_id == Assignment.id)
+            .filter(Assignment.class_id.in_(get_teacher_class_ids(db, user.id)))
         )
     total = q.count()
     rows = (

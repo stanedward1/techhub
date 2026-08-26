@@ -47,6 +47,9 @@ export const studentApi = {
   createClassroom: (data) => request.post('/api/classrooms', data),
   updateClassroom: (id, data) => request.put(`/api/classrooms/${id}`, data),
   deleteClassroom: (id) => request.delete(`/api/classrooms/${id}`),
+  classTeachers: (classId) => request.get(`/api/classrooms/${classId}/teachers`),
+  addClassTeacher: (classId, data) => request.post(`/api/classrooms/${classId}/teachers`, data),
+  removeClassTeacher: (classId, teacherId) => request.delete(`/api/classrooms/${classId}/teachers/${teacherId}`),
   list: (params) => request.get('/api/students', { params }),
   create: (data) => request.post('/api/students', data),
   update: (id, data) => request.put(`/api/students/${id}`, data),
@@ -89,7 +92,8 @@ export const leaveApi = {
 
 export const attendanceApi = {
   list: (params) => request.get('/api/attendance', { params }),
-  checkin: (data) => request.post('/api/attendance/checkin', data)
+  checkin: (data) => request.post('/api/attendance/checkin', data),
+  summary: (params) => request.get('/api/attendance/summary', { params })
 }
 
 export const pointApi = {

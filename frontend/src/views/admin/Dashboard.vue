@@ -1,5 +1,11 @@
 <template>
   <div>
+    <!-- 教师身份标识（班主任 / 科任） -->
+    <div v-if="identity.head_classes?.length || identity.subject_classes?.length" class="identity-bar">
+      <el-tag v-for="c in identity.head_classes" :key="'h' + c" type="warning" effect="dark" size="small" style="margin-right: 6px">班主任 · {{ c }}</el-tag>
+      <el-tag v-for="c in identity.subject_classes" :key="'s' + c" type="info" effect="dark" size="small" style="margin-right: 6px">科任 · {{ c }}</el-tag>
+    </div>
+
     <!-- 统计卡片（可点击跳转） -->
     <el-row :gutter="16" class="stat-row">
       <el-col v-for="s in stats" :key="s.label" :xs="12" :sm="6" :lg="3">
@@ -40,6 +46,42 @@
       </div>
     </div>
 
+    <!-- 出勤率 -->
+    <div class="page-card chart-card">
+      <div class="chart-head">
+        <h3 class="card-title">近 7 天出勤率</h3>
+        <div class="att-head">
+          <span class="att-rate">{{ data.attendance?.rate ?? 0 }}%</span>
+          <span class="att-status">
+            <el-tag v-for="(v, k) in (data.attendance?.status || {})" :key="k" size="small" effect="plain" style="margin-left: 6px">
+              {{ k }} {{ v }}
+            </el-tag>
+          </span>
+        </div>
+      </div>
+      <div ref="attRef" style="width: 100%; height: 220px;"></div>
+    </div>
+
+    <!-- 各班出勤率 -->
+    <div class="page-card chart-card">
+      <h3 class="card-title">各班出勤率</h3>
+      <el-table :data="data.attendance?.by_class || []" size="small" style="margin-top: 8px">
+        <el-table-column prop="class_name" label="班级" min-width="140" />
+        <el-table-column label="出勤率" min-width="180">
+          <template #default="{ row }">
+            <el-progress v-if="row.total" :percentage="row.rate" :stroke-width="10" :color="attRateColor(row.rate)" />
+            <span v-else style="color: #9ca3af; font-size: 12px">未点名</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="出勤 / 缺勤 / 请假 / 迟到" min-width="220">
+          <template #default="{ row }">
+            {{ row.status['出勤'] }} / {{ row.status['缺勤'] }} / {{ row.status['请假'] }} / {{ row.status['迟到'] }}
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!(data.attendance?.by_class?.length)" class="empty-state">暂无考勤数据</div>
+    </div>
+
     <!-- 成绩分布（按考试名称） -->
     <div class="page-card chart-card">
       <div class="chart-head">
@@ -72,12 +114,14 @@ import * as echarts from 'echarts'
 import { adminApi } from '../../api'
 
 const router = useRouter()
-const data = ref({ counts: {}, leave_trend: [], leave_details: [], score_dist: {}, score_dist_by_exam: {}, recent: [] })
+const data = ref({ counts: {}, leave_trend: [], leave_details: [], score_dist: {}, score_dist_by_exam: {}, recent: [], attendance: {}, identity: {} })
 const trendRef = ref(null)
 const distRef = ref(null)
+const attRef = ref(null)
 const selectedExam = ref('')
 let trendChart = null
 let distChart = null
+let attChart = null
 
 // 考试名称列表（用于下拉选择）
 const examNames = computed(() => Object.keys(data.value.score_dist_by_exam || {}))
@@ -114,9 +158,16 @@ const stats = computed(() => {
 })
 
 const leaveDetailDays = computed(() => data.value.leave_details || [])
+const identity = computed(() => data.value.identity || {})
 
 function navigateTo(route) {
   if (route) router.push(route)
+}
+
+function attRateColor(rate) {
+  if (rate >= 95) return '#16a34a'
+  if (rate >= 85) return '#f59e0b'
+  return '#dc2626'
 }
 
 onMounted(async () => {
@@ -132,11 +183,13 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', resize)
   if (trendChart) { trendChart.dispose(); trendChart = null }
   if (distChart) { distChart.dispose(); distChart = null }
+  if (attChart) { attChart.dispose(); attChart = null }
 })
 
 function resize() {
   trendChart?.resize()
   distChart?.resize()
+  attChart?.resize()
 }
 
 function renderCharts() {
@@ -205,10 +258,44 @@ function renderCharts() {
       }]
     })
   }
+
+  if (attRef.value) {
+    if (attChart) attChart.dispose()
+    attChart = echarts.init(attRef.value)
+    const att = data.value.attendance || {}
+    attChart.setOption({
+      tooltip: { trigger: 'axis', formatter: (p) => `${p[0].axisValue}<br/>出勤率：${p[0].value}%` },
+      grid: { left: 40, right: 20, top: 20, bottom: 30 },
+      xAxis: {
+        type: 'category',
+        data: (att.trend || []).map(t => t.date),
+        axisLine: { lineStyle: { color: '#e5e7eb' } },
+        axisTick: { show: false },
+        axisLabel: { color: '#9ca3af', fontSize: 11 }
+      },
+      yAxis: {
+        type: 'value',
+        max: 100,
+        splitLine: { lineStyle: { color: '#f3f4f6' } },
+        axisLabel: { color: '#9ca3af', fontSize: 11, formatter: '{value}%' }
+      },
+      series: [{
+        type: 'line',
+        smooth: true,
+        data: (att.trend || []).map(t => t.rate),
+        areaStyle: { color: 'rgba(16,185,129,0.15)' },
+        lineStyle: { color: '#10b981', width: 2 },
+        itemStyle: { color: '#10b981' },
+        symbol: 'circle',
+        symbolSize: 6
+      }]
+    })
+  }
 }
 </script>
 
 <style scoped>
+.identity-bar { margin-bottom: 12px; }
 .stat-row { margin-bottom: 16px; }
 .stat-card {
   background: #fff; border-radius: var(--radius-lg); padding: 18px 16px;
@@ -232,4 +319,14 @@ function renderCharts() {
   flex-wrap: wrap;
 }
 .chart-head .card-title { margin: 0; }
+.att-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.att-rate {
+  font-size: 22px;
+  font-weight: 700;
+  color: #10b981;
+}
 </style>

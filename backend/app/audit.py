@@ -65,8 +65,15 @@ def serialize_list_with_students(db: Session, rows, id_attr: str = "student_id")
     return items
 
 
-def audit(db: Session, user, action: str, target: str = "", detail: str = ""):
-    """记录一条操作审计日志（不 commit，由调用方统一提交）。"""
+def audit(db: Session, user, action: str, target: str = "", detail: str = "", class_id=None, student_id=None):
+    """记录一条操作审计日志（不 commit，由调用方统一提交）。
+
+    class_id：班级/学生相关操作传入关联班级，用于班主任按班级查看审计日志；
+    student_id：学生相关操作可传学生 id，函数内部自动解析其所属班级。
+    """
+    if class_id is None and student_id is not None:
+        s = db.get(Student, student_id)
+        class_id = s.class_id if s else None
     db.add(
         OperationLog(
             user_id=user.id if user else None,
@@ -75,6 +82,7 @@ def audit(db: Session, user, action: str, target: str = "", detail: str = ""):
             action=action,
             target=target,
             detail=detail,
+            class_id=class_id,
         )
     )
 

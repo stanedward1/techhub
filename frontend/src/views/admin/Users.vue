@@ -22,7 +22,16 @@
           </template>
         </el-table-column>
         <el-table-column prop="phone" label="电话" width="140" />
-        <el-table-column prop="class_name" label="班级" width="160" />
+        <el-table-column prop="class_name" label="班级" width="140" />
+        <el-table-column label="班级身份" min-width="200">
+          <template #default="{ row }">
+            <template v-if="row.role === 'teacher'">
+              <el-tag v-for="c in (row.head_classes || [])" :key="'h' + c" size="small" type="warning" style="margin-right: 4px">班主任·{{ c }}</el-tag>
+              <el-tag v-for="c in (row.subject_classes || [])" :key="'s' + c" size="small" type="info" style="margin-right: 4px">科任·{{ c }}</el-tag>
+              <span v-if="!(row.head_classes || []).length && !(row.subject_classes || []).length" style="color: #9ca3af">未分配班级</span>
+            </template>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>

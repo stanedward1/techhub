@@ -24,7 +24,8 @@ TechHub 是一套面向中职学校的「教学 + 班主任一体化工作平台
 | 迁移 | Alembic | 1.13 | schema 唯一来源，`upgrade head` 建表/加列 |
 | 认证 | python-jose + bcrypt | — | JWT（HS256）+ bcrypt 密码哈希 |
 | 前端框架 | Vue 3 | 3.4 | Composition API + `<script setup>` |
-| UI 库 | Element Plus | 2.7 | 后台与表单 |
+| UI 库 | Element Plus | 2.7 | 后台与表单（桌面端） |
+| 移动端 UI 库 | Vant | 4.10 | 移动端 H5（`/m`） |
 | 图表 | ECharts | 5.5 | 数据看板、通宿生统计 |
 | 构建 | Vite | 5.4 | 开发热更新 + 生产构建 |
 | Markdown | marked + DOMPurify | 12 | 作业正文/日志渲染 + XSS 防护 |
@@ -48,7 +49,7 @@ techhub/
 │   │   ├── schemas.py         # Pydantic 请求/响应模型
 │   │   ├── models/            # SQLAlchemy 模型（按域分组）
 │   │   │   ├── user.py        #   User
-│   │   │   ├── school.py      #   School / Classroom / Student
+│   │   │   ├── school.py      #   School / Classroom / ClassTeacher / Student
 │   │   │   ├── homework.py    #   Assignment / Submission / ExcellentWork / WorkComment
 │   │   │   ├── workbench.py   #   Score / Leave / Point / Communication / Resource / Exam / Seat / Setting / ImportHistory
 │   │   │   ├── classlog.py    #   WorkLog / ClassPlan / TeacherPlan / Schedule / Activity / Talk / ReturnRecord / Performance / StudentComment
@@ -57,10 +58,12 @@ techhub/
 │   │   │   ├── auth.py        #   登录/注册/密码
 │   │   │   ├── meta.py        #   班级选项、编程练习（公开）
 │   │   │   ├── homework.py    #   作业/提交/优秀作品/评论
-│   │   │   ├── students.py    #   学校/班级/学生 CRUD + Excel 导出 + 密码管理 + 通宿生统计
-│   │   │   ├── workbench.py   #   教师工作台（成绩/考勤/积分/沟通/资源/试卷/座位）+ 批量导入
+│   │   │   ├── students.py    #   学校/班级/学生 CRUD + 班级教师（班主任+科任）+ 密码管理 + 通宿生统计
+│   │   │   ├── workbench.py   #   教师工作台（成绩/请假/积分/沟通/资源/试卷/座位/画像/周报）+ 批量导入
 │   │   │   ├── classlog.py    #   班级日志（日志/计划/课表/活动/谈心/返校/表现/评语）
-│   │   │   ├── admin.py       #   账号管理 / 系统设置 / 数据看板
+│   │   │   ├── attendance.py  #   考勤点名 + 出勤率统计
+│   │   │   ├── mobile.py      #   移动端专用接口（学生速查 + 画像概览）
+│   │   │   ├── admin.py       #   账号管理 / 系统设置 / 数据看板 / 审计日志
 │   │   │   └── uploads.py     #   通用文件上传
 │   │   └── seed.py            # 假数据生成（Faker）
 │   ├── tests/                 # pytest 自动化测试
@@ -77,6 +80,7 @@ techhub/
 │   │   ├── router/            # 路由 + 角色守卫
 │   │   ├── layout/            # StudentLayout / AdminLayout（可折叠侧边栏）
 │   │   ├── components/        # Markdown / MarkdownEditor / StudentSelect
+│   │   ├── mobile/            # 移动端（Vant）：layout + views + api
 │   │   ├── views/student/     # 学生端页面（8 个）
 │   │   └── views/admin/       # 管理端页面（22 个）
 │   ├── vite.config.js         # dev 代理 /api、/uploads → 8080
@@ -102,26 +106,32 @@ techhub/
 
 **数据隔离**：学生只能看到/提交**本班级**的作业（`homework._check_student_access`）。
 
+**教师班级归属（班主任 + 科任）**：
+- `classrooms.teacher_id` 绑定**班主任**，`class_teachers` 表关联多位**科任老师**
+- 班主任与科任老师均可操作其所属班级的数据（成绩/积分/考勤/沟通/谈心/表现/评语/作业等）
+- 权限判定统一走 `permissions.get_teacher_class_ids()`（返回班主任 + 科任班级）与 `is_teacher_class_owner()`（判断教师是否可操作某班）
+
 **学生登录**：学生通过「班级 + 姓名 + 密码」登录，账号由教师创建学生档案时自动同步生成。
 
 ## 5. 数据模型概览
 
-### 5.1 表清单（28 张表）
+### 5.1 表清单（33 张表）
 
 | 域 | 表 | 关键字段 |
 | --- | --- | -------- |
 | 认证 | `users` | username、password_hash、role、class_id、name |
-| 基础 | `schools` / `classrooms` / `students` | 学校/班级/学生档案（student_type 通学/寄宿） |
-| 作业 | `assignments` / `submissions` / `excellent_works` / `work_comments` | 任务/提交/优秀/评论 |
-| 工作台 | `scores` / `leaves` / `points` / `communications` / `resources` / `exams` / `seats` / `settings` | 成绩/考勤/积分/沟通/资源/试卷/座位/设置 |
+| 基础 | `schools` / `classrooms` / `class_teachers` / `students` | 学校/班级/班级教师（班主任+科任）/学生档案（student_type 通学/寄宿） |
+| 作业 | `assignments` / `submissions` / `submission_comments` / `excellent_works` / `work_comments` | 任务/提交/提交点评/优秀/评论 |
+| 工作台 | `scores` / `leaves` / `attendance` / `points` / `communications` / `resources` / `exams` / `seats` / `settings` / `student_profile_tags` / `weekly_reports` / `student_board_history` | 成绩/请假/考勤点名/积分/沟通/资源/试卷/座位/设置/画像标签/周报/住宿历史 |
 | 日志 | `work_logs` / `class_plans` / `teacher_plans` / `schedules` / `activities` / `talks` / `return_records` / `performances` / `student_comments` | 日志/计划/课表/活动/谈心/返校/表现/评语 |
-| 审计 | `operation_logs` | 操作审计日志 |
+| 审计 | `operation_logs` | 操作审计日志（含 class_id 班级维度） |
 | 导入 | `import_history` | 数据导入历史（类型/文件名/成功/失败/错误详情） |
 
 ### 5.2 关键关联
 
 - `points.performance_id` → `performances.id`：积分关联表现记录，可实现积分追溯
 - `students.class_id` → `classrooms.id`：学生归属班级
+- `class_teachers.class_id + teacher_id` → 班级-教师多对多关联（科任老师，班主任由 `classrooms.teacher_id` 绑定）
 - `users.class_id + users.name` → 学生账号唯一标识（取代原 username 唯一约束）
 - `import_history.user_id` → `users.id`：导入操作人追溯
 
@@ -144,6 +154,7 @@ techhub/
 
 - **AdminLayout**：深色可折叠侧边栏（220px ↔ 64px）+ 顶部面包屑 + 用户菜单
 - **StudentLayout**：顶部导航栏 + 居中内容区 + 底部页脚
+- **MobileLayout**：移动端底部 TabBar（首页/考勤/学生/记录/请假），基于 Vant
 - 全局 CSS 变量系统：品牌色、中性色、阴影、圆角、间距统一管理
 
 ### 7.2 组件复用
@@ -154,7 +165,12 @@ techhub/
 | `MarkdownEditor.vue` | Markdown 编辑器 | 作业创建/编辑 |
 | `StudentSelect.vue` | 学生下拉选择器 | 积分、表现、成绩、谈心等 |
 
-### 7.3 数据可视化
+### 7.3 移动端（`/m`）
+
+- 独立移动端 H5（Vant 4），与桌面端（Element Plus）共存，通过路由前缀 `/m` 区分
+- 复用后端接口与权限体系（班主任/科任隔离、退学/毕业拦截），新增 `/api/mobile/*` 轻量接口
+
+### 7.4 数据可视化
 
 - ECharts 用于数据看板（折线图、饼图）和学生管理（通宿生环形图）
 - 图表支持点击交互（通宿生图点击跳转明细）

@@ -89,6 +89,74 @@ def checkin(payload: dict, user: User = Depends(get_current_user), db: Session =
             db.add(Attendance(class_id=class_id, student_id=student_id, date=date, status=status))
         saved += 1
 
-    audit(db, user, "attendance_checkin", target=f"班级#{class_id} {date} 考勤点名", detail=f"记录 {saved} 条")
+    audit(db, user, "attendance_checkin", target=f"班级#{class_id} {date} 考勤点名", class_id=class_id, detail=f"记录 {saved} 条")
     db.commit()
     return {"ok": True, "count": saved}
+
+
+@router.get("/api/attendance/summary")
+def attendance_summary(
+    class_id: int,
+    start_date: str,
+    end_date: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """出勤率统计：某班级某日期范围内的出勤率、状态分布与逐日趋势。"""
+    if user.role != "admin" and not is_teacher_class_owner(db, user.id, class_id):
+        raise HTTPException(status_code=403, detail="无权查看该班级考勤统计")
+
+    student_count = (
+        db.query(Student)
+        .filter(Student.class_id == class_id, Student.is_dropped_out.is_(False))
+        .count()
+    )
+
+    records = (
+        db.query(Attendance)
+        .filter(
+            Attendance.class_id == class_id,
+            Attendance.date >= start_date,
+            Attendance.date <= end_date,
+        )
+        .all()
+    )
+
+    status_count = {"出勤": 0, "缺勤": 0, "请假": 0, "迟到": 0}
+    trend_map = {}
+    for r in records:
+        if r.status in status_count:
+            status_count[r.status] += 1
+        day = trend_map.setdefault(r.date, {"出勤": 0, "缺勤": 0, "请假": 0, "迟到": 0})
+        if r.status in day:
+            day[r.status] += 1
+
+    total = sum(status_count.values())
+    attendance_rate = round(status_count["出勤"] / total * 100, 1) if total else 0
+
+    trend = []
+    for d in sorted(trend_map.keys()):
+        day = trend_map[d]
+        day_total = sum(day.values())
+        trend.append(
+            {
+                "date": d,
+                "出勤": day["出勤"],
+                "缺勤": day["缺勤"],
+                "请假": day["请假"],
+                "迟到": day["迟到"],
+                "rate": round(day["出勤"] / day_total * 100, 1) if day_total else 0,
+            }
+        )
+
+    return {
+        "class_id": class_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "student_count": student_count,
+        "status_count": status_count,
+        "total": total,
+        "attendance_rate": attendance_rate,
+        "trend": trend,
+    }
+

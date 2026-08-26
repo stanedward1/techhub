@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models import Classroom, Student, User
+from app.models import Classroom, ClassTeacher, Student, User
 
 
 def ensure_student_operable(db: Session, student_id: int) -> Student:
@@ -43,9 +43,13 @@ def ensure_class_operable(db: Session, class_id: int) -> Classroom:
 
 
 def get_teacher_class_ids(db: Session, teacher_id: int) -> List[int]:
-    """获取教师负责的班级ID列表"""
-    classrooms = db.query(Classroom).filter(Classroom.teacher_id == teacher_id).all()
-    return [c.id for c in classrooms]
+    """获取教师可操作的班级ID列表（班主任班级 + 科任班级）。"""
+    own_ids = {c.id for c in db.query(Classroom).filter(Classroom.teacher_id == teacher_id).all()}
+    own_ids.update(
+        ct.class_id
+        for ct in db.query(ClassTeacher).filter(ClassTeacher.teacher_id == teacher_id).all()
+    )
+    return sorted(own_ids)
 
 
 def get_student_ids_in_class(db: Session, class_id: int) -> List[int]:
@@ -79,12 +83,19 @@ def apply_student_class_filter(db: Session, user: User, q, class_id: Optional[in
 
 
 def is_teacher_class_owner(db: Session, teacher_id: int, class_id: int) -> bool:
-    """检查教师是否是某班级的班主任"""
-    classroom = db.query(Classroom).filter(
-        Classroom.id == class_id,
-        Classroom.teacher_id == teacher_id
-    ).first()
-    return classroom is not None
+    """检查教师是否可操作某班级（班主任或科任老师）。"""
+    if (
+        db.query(Classroom)
+        .filter(Classroom.id == class_id, Classroom.teacher_id == teacher_id)
+        .first()
+    ):
+        return True
+    return (
+        db.query(ClassTeacher)
+        .filter(ClassTeacher.class_id == class_id, ClassTeacher.teacher_id == teacher_id)
+        .first()
+        is not None
+    )
 
 
 def is_student_in_teacher_classes(db: Session, teacher_id: int, student_id: int) -> bool:
@@ -96,10 +107,11 @@ def is_student_in_teacher_classes(db: Session, teacher_id: int, student_id: int)
 
 
 def filter_classrooms_by_teacher(db: Session, teacher_id: int, is_admin: bool):
-    """根据教师身份过滤班级查询"""
+    """根据教师身份过滤班级查询（班主任 + 科任）。"""
     query = db.query(Classroom)
     if not is_admin:
-        query = query.filter(Classroom.teacher_id == teacher_id)
+        class_ids = get_teacher_class_ids(db, teacher_id)
+        query = query.filter(Classroom.id.in_(class_ids)) if class_ids else query.filter(False)
     return query.order_by(Classroom.id)
 
 

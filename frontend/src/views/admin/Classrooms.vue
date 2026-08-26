@@ -28,9 +28,10 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="isAdmin" link type="success" @click="openTeachers(row)">科任</el-button>
             <el-button v-if="isAdmin" link type="danger" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -65,6 +66,28 @@
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 科任老师管理 -->
+    <el-dialog v-model="teacherDialog" :title="`科任老师 - ${currentClass?.name || ''}`" width="480px">
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px">
+        班主任与科任老师均可对该班级的学生、成绩、作业等进行各项操作。
+      </el-alert>
+      <div class="teacher-list">
+        <div v-for="t in classTeacherList" :key="t.teacher_id" class="teacher-item">
+          <span class="teacher-name">{{ t.name }}（{{ t.username }}）</span>
+          <el-tag v-if="t.is_head" size="small" type="warning">班主任</el-tag>
+          <el-tag v-else size="small" type="info">科任</el-tag>
+          <el-button v-if="!t.is_head" link type="danger" @click="removeTeacher(t)">移除</el-button>
+        </div>
+        <div v-if="!classTeacherList.length" class="empty-state">暂无教师</div>
+      </div>
+      <div class="teacher-add">
+        <el-select v-model="newTeacherId" filterable placeholder="选择教师" style="flex: 1">
+          <el-option v-for="t in teachers" :key="t.id" :label="`${t.name}（${t.username}）`" :value="t.id" />
+        </el-select>
+        <el-button type="primary" @click="addTeacher">添加</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -83,6 +106,11 @@ const editing = ref(null)
 const saving = ref(false)
 const graduatedFilter = ref('false')
 const form = reactive({ name: '', code: '', major: '', grade: '一年级', teacher_id: null, is_graduated: false })
+// 科任老师管理
+const teacherDialog = ref(false)
+const currentClass = ref(null)
+const classTeacherList = ref([])
+const newTeacherId = ref(null)
 
 onMounted(async () => {
   // 管理员加载教师列表（用于指定班主任）
@@ -142,4 +170,62 @@ async function remove(row) {
   ElMessage.success('删除成功')
   load()
 }
+
+function openTeachers(row) {
+  currentClass.value = row
+  newTeacherId.value = null
+  teacherDialog.value = true
+  loadClassTeachers()
+}
+
+async function loadClassTeachers() {
+  try {
+    const res = await studentApi.classTeachers(currentClass.value.id)
+    classTeacherList.value = res.items || []
+  } catch (e) {
+  }
+}
+
+async function addTeacher() {
+  if (!newTeacherId.value) return ElMessage.warning('请选择教师')
+  try {
+    await studentApi.addClassTeacher(currentClass.value.id, { teacher_id: newTeacherId.value })
+    ElMessage.success('添加成功')
+    newTeacherId.value = null
+    loadClassTeachers()
+  } catch (e) {
+  }
+}
+
+async function removeTeacher(t) {
+  await ElMessageBox.confirm(`确定移除科任老师「${t.name}」吗？`, '提示', { type: 'warning' })
+  try {
+    await studentApi.removeClassTeacher(currentClass.value.id, t.teacher_id)
+    ElMessage.success('已移除')
+    loadClassTeachers()
+  } catch (e) {
+  }
+}
 </script>
+
+<style scoped>
+.teacher-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.teacher-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.teacher-name {
+  flex: 1;
+}
+.teacher-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+</style>

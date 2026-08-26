@@ -80,6 +80,7 @@ python -m pytest tests/ -v
 
 - 只读接口用 `Depends(get_current_user)`，写接口用 `Depends(require_teacher)` 或 `Depends(require_student)`。
 - 任何新增管理端接口**必须**挂 `require_teacher`，学生端接口**必须**做班级数据隔离校验。
+- 教师班级数据隔离**统一**走 `permissions.get_teacher_class_ids()` / `is_teacher_class_owner()`，这两个函数已支持「班主任 + 科任老师」多教师模型；**不得**直接比较 `Classroom.teacher_id` 做权限判断，否则会漏掉科任老师。
 
 ### 3.4 模型变更
 
@@ -96,16 +97,19 @@ python -m pytest tests/ -v
 
 ### 3.6 审计日志
 
-- 关键写操作（删除学生、重置密码等）调用 `audit(db, user, action, target)` 记录。
+- 关键写操作调用 `audit(db, user, action, target, detail, class_id=None, student_id=None)` 记录。
+- **学生相关操作必须传 `student_id`**（函数自动解析班级），**班级相关操作必须传 `class_id`**，用于班主任按班级查看审计日志；账号/系统级操作无需传。
 - 审计日志存储在 `operation_logs` 表。
+- 查看权限分级：管理员全部、班主任自己班级、科任老师不可见（由 `admin._visible_audit_class_ids` 控制）。
 
 ## 4. 前端代码规范
 
 ### 4.1 结构约定
 
 - 页面放 `views/`，按 `student/`、`admin/` 分组；跨页复用的组件放 `components/`。
-- API 调用统一收敛到 `api/index.js`，页面**不得**直接 import axios。
-- 路由统一在 `router/index.js` 注册，角色守卫统一走 `beforeEach`。
+- **移动端页面放 `mobile/views/`**，布局放 `mobile/layout/`，使用 Vant 组件（`van-*`），与桌面端 Element Plus（`el-*`）互不干扰。
+- API 调用统一收敛到 `api/index.js`（移动端专用接口放 `mobile/api/mobile.js`），页面**不得**直接 import axios。
+- 路由统一在 `router/index.js` 注册，角色守卫统一走 `beforeEach`；移动端路由前缀 `/m`，同样纳入 `requiresTeacher` 校验。
 
 ### 4.2 组件风格
 

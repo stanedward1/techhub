@@ -16,4 +16,5 @@ class OperationLog(Base):
     action = Column(String(50), index=True)  # 如 delete_student / change_password
     target = Column(String(255))  # 操作对象描述
     detail = Column(Text)  # 补充信息
+    class_id = Column(Integer, index=True)  # 关联班级（班级/学生相关操作），账号与系统操作为空
     created_at = Column(DateTime(timezone=True), server_default=func.now())

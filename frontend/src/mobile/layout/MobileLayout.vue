@@ -24,6 +24,7 @@ const title = computed(() => {
   const map = {
     '/m/home': '首页',
     '/m/checkin': '考勤打卡',
+    '/m/attendance-stats': '出勤统计',
     '/m/students': '学生速查',
     '/m/record': '快捷记录',
     '/m/leaves': '请假管理'

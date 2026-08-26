@@ -1,5 +1,5 @@
 from app.models.user import User
-from app.models.school import School, Classroom, Student
+from app.models.school import School, Classroom, ClassTeacher, Student
 from app.models.homework import Assignment, Submission, ExcellentWork, WorkComment, SubmissionComment
 from app.models.workbench import (
     Score,
@@ -33,6 +33,7 @@ __all__ = [
     "User",
     "School",
     "Classroom",
+    "ClassTeacher",
     "Student",
     "Assignment",
     "Submission",

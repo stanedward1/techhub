@@ -87,6 +87,7 @@ const routes = [
       { path: 'students', name: 'm-students', component: () => import('../mobile/views/StudentList.vue') },
       { path: 'students/:id', name: 'm-student-overview', component: () => import('../mobile/views/StudentOverview.vue') },
       { path: 'checkin', name: 'm-checkin', component: () => import('../mobile/views/Checkin.vue') },
+      { path: 'attendance-stats', name: 'm-attendance-stats', component: () => import('../mobile/views/AttendanceStats.vue') },
       { path: 'record', name: 'm-record', component: () => import('../mobile/views/Record.vue') },
       { path: 'leaves', name: 'm-leaves', component: () => import('../mobile/views/LeaveList.vue') }
     ]

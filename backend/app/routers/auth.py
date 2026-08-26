@@ -226,8 +226,8 @@ async def upload_avatar(
 
     # 删除旧头像文件
     if user.avatar:
-        old_path = user.avatar.replace("/uploads/", "")
-        old_full = os.path.join(old_path)
+        old_name = user.avatar.rsplit("/", 1)[-1]
+        old_full = os.path.join(_AVATAR_DIR, old_name)
         if os.path.exists(old_full):
             os.remove(old_full)
 
