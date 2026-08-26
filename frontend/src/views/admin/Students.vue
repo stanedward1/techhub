@@ -5,6 +5,11 @@
       <el-select v-model="classId" placeholder="全部班级" clearable style="width: 180px" @change="load">
         <el-option v-for="c in classes" :key="c.id" :label="c.name" :value="c.id" />
       </el-select>
+      <el-select v-model="droppedFilter" style="width: 120px" @change="onPage(1)">
+        <el-option label="在籍学生" value="false" />
+        <el-option label="已退学" value="true" />
+        <el-option label="全部" value="" />
+      </el-select>
       <el-button @click="load">查询</el-button>
       <SortBar v-model="order" />
       <div class="spacer"></div>
@@ -26,6 +31,7 @@
         <el-table-column label="头像" width="70">
           <template #default="{ row }">
             <el-upload
+              v-if="!row.is_dropped_out"
               :show-file-list="false"
               :before-upload="(f) => beforeAvatarUpload(f, row)"
               :http-request="(opt) => handleStudentAvatar(opt, row)"
@@ -35,6 +41,9 @@
                 {{ row.name?.[0] }}
               </el-avatar>
             </el-upload>
+            <el-avatar v-else :size="32" :src="row.avatar" style="background: linear-gradient(135deg, #9ca3af, #6b7280); color: #fff; font-weight: 600; font-size: 13px;">
+              {{ row.name?.[0] }}
+            </el-avatar>
           </template>
         </el-table-column>
         <el-table-column prop="name" label="姓名" width="100" />
@@ -56,12 +65,19 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.is_dropped_out ? 'danger' : 'success'" size="small">
+              {{ row.is_dropped_out ? '已退学' : '在籍' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="primary" :disabled="row.is_dropped_out" @click="openEdit(row)">编辑</el-button>
             <el-button link type="success" @click="$router.push(`/admin/students/${row.id}/profile`)">画像</el-button>
-            <el-button link type="warning" @click="openPassword(row)">密码</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button link type="warning" :disabled="row.is_dropped_out" @click="openPassword(row)">密码</el-button>
+            <el-button link type="danger" :disabled="row.is_dropped_out" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -95,6 +111,12 @@
           <el-radio-group v-model="form.student_type">
             <el-radio value="day">通学生</el-radio><el-radio value="boarding">寄宿生</el-radio>
           </el-radio-group>
+        </el-form-item>
+        <el-form-item label="退学">
+          <el-switch v-model="form.is_dropped_out" active-text="已退学" inactive-text="在籍" />
+          <div v-if="form.is_dropped_out" style="color: #e6a23c; font-size: 12px; line-height: 1.5; margin-top: 4px;">
+            标记退学后，教师与管理员将无法再对该生进行成绩、考勤、积分等各项操作。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -253,6 +275,7 @@ const rawItems = ref([])
 const classes = ref([])
 const keyword = ref('')
 const classId = ref(null)
+const droppedFilter = ref('false')
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
@@ -291,7 +314,7 @@ const items = useSorted(rawItems)
 
 const form = reactive({
   student_no: '', name: '', gender: '男', class_id: null, major: '', birth_date: '',
-  parent_name: '', parent_phone: '', student_type: 'day'
+  parent_name: '', parent_phone: '', student_type: 'day', is_dropped_out: false
 })
 
 onMounted(async () => {
@@ -304,7 +327,7 @@ onMounted(async () => {
 async function load() {
   loading.value = true
   try {
-    const res = await studentApi.list({ page: page.value, page_size: pageSize, keyword: keyword.value, class_id: classId.value })
+    const res = await studentApi.list({ page: page.value, page_size: pageSize, keyword: keyword.value, class_id: classId.value, dropped_out: droppedFilter.value })
     rawItems.value = res.items
     total.value = res.total
   } catch (e) {
@@ -324,7 +347,7 @@ function onPage(p) {
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { student_no: '', name: '', gender: '男', class_id: classId.value, major: '', birth_date: '', parent_name: '', parent_phone: '', student_type: 'day' })
+  Object.assign(form, { student_no: '', name: '', gender: '男', class_id: classId.value, major: '', birth_date: '', parent_name: '', parent_phone: '', student_type: 'day', is_dropped_out: false })
   dialog.value = true
 }
 
@@ -357,7 +380,8 @@ async function remove(row) {
 }
 
 async function exportExcel() {
-  const res = await studentApi.export({ class_id: classId.value })
+  const droppedParam = droppedFilter.value === '' ? 'all' : droppedFilter.value
+  const res = await studentApi.export({ class_id: classId.value, dropped_out: droppedParam })
   const blob = new Blob([res], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

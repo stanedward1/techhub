@@ -1,6 +1,11 @@
 <template>
   <div>
     <div class="toolbar">
+      <el-select v-model="graduatedFilter" style="width: 120px" @change="load">
+        <el-option label="在读班级" value="false" />
+        <el-option label="已毕业" value="true" />
+        <el-option label="全部" value="" />
+      </el-select>
       <div class="spacer"></div>
       <el-button v-if="isAdmin" type="primary" @click="openCreate">新增班级</el-button>
     </div>
@@ -16,6 +21,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="student_count" label="学生数" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.is_graduated ? 'info' : 'success'" size="small">
+              {{ row.is_graduated ? '已毕业' : '在读' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -41,6 +53,12 @@
             <el-option v-for="t in teachers" :key="t.id" :label="`${t.name}（${t.username}）`" :value="t.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="毕业状态">
+          <el-switch v-model="form.is_graduated" active-text="已毕业" inactive-text="在读" />
+          <div v-if="form.is_graduated" style="color: #e6a23c; font-size: 12px; line-height: 1.5; margin-top: 4px;">
+            标记毕业后，教师与管理员将无法再对该班所有学生进行各项操作。
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
@@ -63,7 +81,8 @@ const loading = ref(false)
 const dialog = ref(false)
 const editing = ref(null)
 const saving = ref(false)
-const form = reactive({ name: '', code: '', major: '', grade: '一年级', teacher_id: null })
+const graduatedFilter = ref('false')
+const form = reactive({ name: '', code: '', major: '', grade: '一年级', teacher_id: null, is_graduated: false })
 
 onMounted(async () => {
   // 管理员加载教师列表（用于指定班主任）
@@ -79,7 +98,7 @@ onMounted(async () => {
 async function load() {
   loading.value = true
   try {
-    const res = await studentApi.classrooms()
+    const res = await studentApi.classrooms({ graduated: graduatedFilter.value })
     items.value = res.items
   } catch (e) {
   } finally {
@@ -89,13 +108,13 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', code: '', major: '', grade: '一年级', teacher_id: null })
+  Object.assign(form, { name: '', code: '', major: '', grade: '一年级', teacher_id: null, is_graduated: false })
   dialog.value = true
 }
 
 function openEdit(row) {
   editing.value = row
-  Object.assign(form, { name: row.name, code: row.code, major: row.major, grade: row.grade, teacher_id: row.teacher_id })
+  Object.assign(form, { name: row.name, code: row.code, major: row.major, grade: row.grade, teacher_id: row.teacher_id, is_graduated: !!row.is_graduated })
   dialog.value = true
 }
 
@@ -103,7 +122,7 @@ async function save() {
   if (!form.name || !form.code) return ElMessage.warning('请填写名称和代码')
   saving.value = true
   try {
-    const payload = { name: form.name, code: form.code, major: form.major, grade: form.grade }
+    const payload = { name: form.name, code: form.code, major: form.major, grade: form.grade, is_graduated: !!form.is_graduated }
     // 教师编辑时不提交 teacher_id（后端也会拒绝），管理员提交
     if (isAdmin) payload.teacher_id = form.teacher_id
     if (editing.value) await studentApi.updateClassroom(editing.value.id, payload)

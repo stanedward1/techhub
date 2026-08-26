@@ -24,13 +24,22 @@ from app.models import (
     User,
     WeeklyReport,
 )
-from app.audit import attach_student, serialize_list_with_students, audit, student_name
+from app.audit import (
+    attach_student,
+    serialize_list_with_students,
+    audit,
+    student_name,
+    active_student_id_query,
+    active_classroom_id_query,
+)
 from app.config import settings
 from app.utils import safe_filename, to_dict
 from app.permissions import (
     get_teacher_class_ids,
     is_student_in_teacher_classes,
     apply_student_class_filter,
+    ensure_student_operable,
+    ensure_class_operable,
 )
 import uuid
 
@@ -51,6 +60,8 @@ def list_scores(
     db: Session = Depends(get_db),
 ):
     q = db.query(Score)
+    # 排除退学学生
+    q = q.filter(Score.student_id.in_(active_student_id_query(db)))
     # 教师只能查看自己负责班级的学生成绩
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
@@ -81,6 +92,8 @@ def list_scores(
 def create_score(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("student_id") or payload.get("score") is None:
         raise HTTPException(status_code=400, detail="请选择学生并填写成绩")
+    # 退学/毕业限制
+    ensure_student_operable(db, payload["student_id"])
     # 教师只能为自己班级的学生创建成绩
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, payload["student_id"]):
         raise HTTPException(status_code=403, detail="无权为该学生创建成绩")
@@ -102,6 +115,8 @@ def update_score(score_id: int, payload: dict, user: User = Depends(get_current_
     s = db.get(Score, score_id)
     if not s:
         raise HTTPException(status_code=404, detail="记录不存在")
+    # 退学/毕业限制
+    ensure_student_operable(db, s.student_id)
     # 教师只能修改自己班级学生的成绩
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, s.student_id):
         raise HTTPException(status_code=403, detail="无权修改该成绩")
@@ -111,6 +126,8 @@ def update_score(score_id: int, payload: dict, user: User = Depends(get_current_
             if f == "student_id" and user.role != "admin":
                 if not is_student_in_teacher_classes(db, user.id, payload["student_id"]):
                     raise HTTPException(status_code=403, detail="无权将成绩转移到该学生")
+            if f == "student_id" and payload["student_id"] != s.student_id:
+                ensure_student_operable(db, payload["student_id"])
             setattr(s, f, payload[f])
     audit(db, user, "update_score", target=f"成绩#{score_id}-{student_name(db, s.student_id)}")
     db.commit()
@@ -122,6 +139,8 @@ def update_score(score_id: int, payload: dict, user: User = Depends(get_current_
 def delete_score(score_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     s = db.get(Score, score_id)
     if s:
+        # 退学/毕业限制
+        ensure_student_operable(db, s.student_id)
         # 教师只能删除自己班级学生的成绩
         if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, s.student_id):
             raise HTTPException(status_code=403, detail="无权删除该成绩")
@@ -134,6 +153,8 @@ def delete_score(score_id: int, user: User = Depends(get_current_user), db: Sess
 @router.get("/api/scores/export")
 def export_scores(student_id: int | None = None, class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Score)
+    # 排除退学学生
+    q = q.filter(Score.student_id.in_(active_student_id_query(db)))
     # 教师只能导出自己负责班级的学生成绩
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
@@ -181,6 +202,8 @@ def list_leaves(
     db: Session = Depends(get_db),
 ):
     q = db.query(Leave)
+    # 排除退学学生
+    q = q.filter(Leave.student_id.in_(active_student_id_query(db)))
     # 教师只能查看自己负责班级的学生请假
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
@@ -209,6 +232,8 @@ def list_leaves(
 def create_leave(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("student_id"):
         raise HTTPException(status_code=400, detail="请选择学生")
+    # 退学/毕业限制
+    ensure_student_operable(db, payload["student_id"])
     # 教师只能为自己班级的学生创建请假
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, payload["student_id"]):
         raise HTTPException(status_code=403, detail="无权为该学生创建请假")
@@ -232,6 +257,8 @@ def update_leave(leave_id: int, payload: dict, user: User = Depends(get_current_
     x = db.get(Leave, leave_id)
     if not x:
         raise HTTPException(status_code=404, detail="记录不存在")
+    # 退学/毕业限制
+    ensure_student_operable(db, x.student_id)
     # 教师只能修改自己班级学生的请假
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, x.student_id):
         raise HTTPException(status_code=403, detail="无权修改该请假")
@@ -248,6 +275,8 @@ def update_leave(leave_id: int, payload: dict, user: User = Depends(get_current_
 def delete_leave(leave_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Leave, leave_id)
     if x:
+        # 退学/毕业限制
+        ensure_student_operable(db, x.student_id)
         # 教师只能删除自己班级学生的请假
         if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, x.student_id):
             raise HTTPException(status_code=403, detail="无权删除该请假")
@@ -261,6 +290,8 @@ def delete_leave(leave_id: int, user: User = Depends(get_current_user), db: Sess
 @router.get("/api/points")
 def list_points(page: int = 1, page_size: int = 20, student_id: int | None = None, class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Point)
+    # 排除退学学生
+    q = q.filter(Point.student_id.in_(active_student_id_query(db)))
     # 教师只能查看自己负责班级的学生积分
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
@@ -287,6 +318,8 @@ def list_points(page: int = 1, page_size: int = 20, student_id: int | None = Non
 def create_point(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("student_id") or payload.get("points") is None:
         raise HTTPException(status_code=400, detail="请选择学生并填写积分")
+    # 退学/毕业限制
+    ensure_student_operable(db, payload["student_id"])
     # 教师只能为自己班级的学生创建积分
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, payload["student_id"]):
         raise HTTPException(status_code=403, detail="无权为该学生创建积分")
@@ -306,6 +339,8 @@ def create_point(payload: dict, user: User = Depends(get_current_user), db: Sess
 def delete_point(point_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Point, point_id)
     if x:
+        # 退学/毕业限制
+        ensure_student_operable(db, x.student_id)
         # 教师只能删除自己班级学生的积分
         if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, x.student_id):
             raise HTTPException(status_code=403, detail="无权删除该积分")
@@ -319,6 +354,8 @@ def delete_point(point_id: int, user: User = Depends(get_current_user), db: Sess
 @router.get("/api/communications")
 def list_communications(page: int = 1, page_size: int = 20, student_id: int | None = None, class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Communication)
+    # 排除退学学生
+    q = q.filter(Communication.student_id.in_(active_student_id_query(db)))
     # 教师只能查看自己负责班级的学生沟通
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
@@ -345,6 +382,8 @@ def list_communications(page: int = 1, page_size: int = 20, student_id: int | No
 def create_communication(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("student_id"):
         raise HTTPException(status_code=400, detail="请选择学生")
+    # 退学/毕业限制
+    ensure_student_operable(db, payload["student_id"])
     # 教师只能为自己班级的学生创建沟通
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, payload["student_id"]):
         raise HTTPException(status_code=403, detail="无权为该学生创建沟通")
@@ -365,6 +404,8 @@ def create_communication(payload: dict, user: User = Depends(get_current_user), 
 def delete_communication(communication_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Communication, communication_id)
     if x:
+        # 退学/毕业限制
+        ensure_student_operable(db, x.student_id)
         # 教师只能删除自己班级学生的沟通
         if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, x.student_id):
             raise HTTPException(status_code=403, detail="无权删除该沟通")
@@ -539,6 +580,8 @@ def save_seat(payload: dict, user: User = Depends(get_current_user), db: Session
     class_id = payload.get("class_id")
     if not class_id:
         raise HTTPException(status_code=400, detail="缺少班级")
+    # 毕业限制：毕业班级不可再修改座位表
+    ensure_class_operable(db, class_id)
     # 教师只能保存自己负责班级的座位
     if user.role != "admin":
         from app.permissions import is_teacher_class_owner
@@ -649,6 +692,9 @@ async def import_students(
 
     # 预加载班级映射：class_name -> class_id
     classrooms = {c.name: c.id for c in db.query(Classroom).all()}
+    graduated_class_ids = {
+        c.id for c in db.query(Classroom).filter(Classroom.is_graduated.is_(True)).all()
+    }
 
     for row_num, row in enumerate(rows, start=2):
         if not any(row):
@@ -680,6 +726,11 @@ async def import_students(
         class_id = classrooms.get(data["class_name"])
         if not class_id:
             all_errors.append(f"第{row_num}行：班级「{data['class_name']}」不存在")
+            continue
+
+        # 已毕业班级不可再导入学生
+        if class_id in graduated_class_ids:
+            all_errors.append(f"第{row_num}行：班级「{data['class_name']}」已毕业，无法导入学生")
             continue
 
         # 教师只能导入到自己负责的班级
@@ -793,6 +844,16 @@ async def import_scores(
         if not student:
             all_errors.append(f"第{row_num}行：学号 {data['student_no']} 不存在")
             continue
+
+        # 退学/毕业限制：退学学生或毕业班级学生不可导入成绩
+        if student.is_dropped_out:
+            all_errors.append(f"第{row_num}行：学生「{data['name']}」已退学，无法导入成绩")
+            continue
+        if student.class_id:
+            cls = db.get(Classroom, student.class_id)
+            if cls and cls.is_graduated:
+                all_errors.append(f"第{row_num}行：学生「{data['name']}」所在班级已毕业，无法导入成绩")
+                continue
 
         # 教师只能导入自己班级学生的成绩
         if teacher_student_nos is not None and data["student_no"] not in teacher_student_nos:
@@ -1025,6 +1086,8 @@ def _student_out(db: Session, s: Student) -> dict:
 
 @router.post("/api/students/{student_id}/tags")
 def add_student_tag(student_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 退学/毕业限制
+    ensure_student_operable(db, student_id)
     # 教师只能给自己班级学生添加标签
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
         raise HTTPException(status_code=403, detail="无权为该学生添加标签")
@@ -1045,6 +1108,8 @@ def add_student_tag(student_id: int, payload: dict, user: User = Depends(get_cur
 
 @router.delete("/api/students/{student_id}/tags/{tag_id}")
 def remove_student_tag(student_id: int, tag_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 退学/毕业限制
+    ensure_student_operable(db, student_id)
     # 教师只能删除自己班级学生的标签
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
         raise HTTPException(status_code=403, detail="无权删除该学生标签")
@@ -1064,7 +1129,7 @@ def get_weekly_data(class_id: int, week_start: str = "", week_end: str = "", use
         from app.permissions import is_teacher_class_owner
         if not is_teacher_class_owner(db, user.id, class_id):
             raise HTTPException(status_code=403, detail="无权查看该班级周报")
-    students = db.query(Student).filter(Student.class_id == class_id).all()
+    students = db.query(Student).filter(Student.class_id == class_id, Student.is_dropped_out.is_(False)).all()
     student_ids = [s.id for s in students]
     student_map = {s.id: s.name for s in students}  # id → name 映射，避免重复查询
     total_students = len(students)
@@ -1163,6 +1228,8 @@ def get_weekly_data(class_id: int, week_start: str = "", week_end: str = "", use
 @router.get("/api/reports")
 def list_reports(class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(WeeklyReport)
+    # 排除毕业班级的周报
+    q = q.filter(WeeklyReport.class_id.in_(active_classroom_id_query(db)))
     # 教师只能查看自己班级的周报
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
@@ -1208,6 +1275,8 @@ def save_report(payload: dict, user=Depends(dep), db: Session = Depends(get_db))
         r = db.get(WeeklyReport, report_id)
         if not r:
             raise HTTPException(status_code=404, detail="报告不存在")
+        # 毕业限制：毕业班级不可再修改周报
+        ensure_class_operable(db, r.class_id)
         # 教师只能修改自己班级的周报
         if user.role != "admin":
             from app.permissions import is_teacher_class_owner
@@ -1217,6 +1286,9 @@ def save_report(payload: dict, user=Depends(dep), db: Session = Depends(get_db))
         r.content = payload.get("content", "")
         r.data_snapshot = json.dumps(payload.get("data_snapshot", {}), ensure_ascii=False)
     else:
+        # 毕业限制：毕业班级不可再生成周报
+        if class_id:
+            ensure_class_operable(db, class_id)
         r = WeeklyReport(
             class_id=class_id,
             title=title,

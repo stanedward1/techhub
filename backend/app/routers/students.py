@@ -8,22 +8,21 @@ from openpyxl import Workbook
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import require_teacher, get_current_user
+from app.deps import get_current_user
 from app.audit import audit
 from app.models import Classroom, School, Student, StudentBoardHistory, User
 from app.security import hash_password
 from app.utils import to_dict
 from app.permissions import (
-    get_teacher_class_ids,
     is_teacher_class_owner,
     is_student_in_teacher_classes,
     filter_classrooms_by_teacher,
     filter_students_by_teacher,
+    ensure_student_operable,
+    ensure_class_operable,
 )
 
 router = APIRouter(tags=["基础数据"])
-
-admin_dep = require_teacher  # 教师/管理员均可管理基础数据
 
 
 def _student_out(db: Session, s: Student) -> dict:
@@ -42,14 +41,13 @@ def _student_out(db: Session, s: Student) -> dict:
 
 # ---------------- 学校 ----------------
 @router.get("/api/schools")
-def list_schools(_=Depends(admin_dep), db: Session = Depends(get_db)):
+def list_schools(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = db.query(School).order_by(School.id).all()
     return {"items": [to_dict(s) for s in rows], "total": len(rows)}
 
 
 @router.post("/api/schools")
 def create_school(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # 只有管理员可以创建学校
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以创建学校")
     name = (payload.get("name") or "").strip()
@@ -58,7 +56,7 @@ def create_school(payload: dict, user: User = Depends(get_current_user), db: Ses
         raise HTTPException(status_code=400, detail="学校名称和代码不能为空")
     s = School(name=name, code=code, address=payload.get("address"), phone=payload.get("phone"))
     db.add(s)
-    audit(db, user, "create_school", target=f"新增学校")
+    audit(db, user, "create_school", target="新增学校")
     db.commit()
     db.refresh(s)
     return to_dict(s)
@@ -66,7 +64,6 @@ def create_school(payload: dict, user: User = Depends(get_current_user), db: Ses
 
 @router.put("/api/schools/{school_id}")
 def update_school(school_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # 只有管理员可以修改学校
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以修改学校")
     s = db.get(School, school_id)
@@ -82,7 +79,6 @@ def update_school(school_id: int, payload: dict, user: User = Depends(get_curren
 
 @router.delete("/api/schools/{school_id}")
 def delete_school(school_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # 只有管理员可以删除学校
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以删除学校")
     s = db.get(School, school_id)
@@ -95,24 +91,37 @@ def delete_school(school_id: int, user: User = Depends(get_current_user), db: Se
 
 # ---------------- 班级 ----------------
 @router.get("/api/classrooms")
-def list_classrooms(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_classrooms(
+    graduated: str = "",
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     # 管理员看所有班级，教师只看自己负责的班级
     is_admin = user.role == "admin"
     query = filter_classrooms_by_teacher(db, user.id, is_admin)
+    # 毕业筛选："" 全部；"false" 未毕业；"true" 已毕业
+    if graduated == "false":
+        query = query.filter(Classroom.is_graduated.is_(False))
+    elif graduated == "true":
+        query = query.filter(Classroom.is_graduated.is_(True))
     rows = query.all()
     items = []
     for c in rows:
         d = to_dict(c)
-        # 附加班主任姓名
         teacher = db.get(User, c.teacher_id) if c.teacher_id else None
         d["teacher_name"] = teacher.name if teacher else None
+        # 在籍学生数（不含退学）
+        d["student_count"] = (
+            db.query(Student)
+            .filter(Student.class_id == c.id, Student.is_dropped_out.is_(False))
+            .count()
+        )
         items.append(d)
     return {"items": items, "total": len(items)}
 
 
 @router.post("/api/classrooms")
 def create_classroom(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # 只有管理员可以创建班级
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以创建班级")
     name = (payload.get("name") or "").strip()
@@ -128,9 +137,10 @@ def create_classroom(payload: dict, user: User = Depends(get_current_user), db: 
         major=payload.get("major"),
         grade=payload.get("grade"),
         teacher_id=payload.get("teacher_id"),
+        is_graduated=bool(payload.get("is_graduated", False)),
     )
     db.add(c)
-    audit(db, user, "create_classroom", target=f"新增班级")
+    audit(db, user, "create_classroom", target="新增班级")
     db.commit()
     db.refresh(c)
     return to_dict(c)
@@ -144,7 +154,7 @@ def update_classroom(class_id: int, payload: dict, user: User = Depends(get_curr
     # 教师只能修改自己负责的班级
     if user.role != "admin" and c.teacher_id != user.id:
         raise HTTPException(status_code=403, detail="无权修改该班级")
-    # 教师不能修改班级对应的教师（teacher_id 仅管理员可编辑）
+    # 教师不能修改班级对应的教师
     if user.role != "admin" and "teacher_id" in payload and payload["teacher_id"] is not None:
         raise HTTPException(status_code=403, detail="教师无权修改班级对应的教师")
     # 管理员修改 teacher_id 时校验目标必须是教师角色
@@ -152,7 +162,7 @@ def update_classroom(class_id: int, payload: dict, user: User = Depends(get_curr
         t = db.get(User, payload["teacher_id"])
         if not t or t.role != "teacher":
             raise HTTPException(status_code=400, detail="所选教师不存在或不是教师角色")
-    for f in ("name", "code", "major", "grade", "teacher_id"):
+    for f in ("name", "code", "major", "grade", "teacher_id", "is_graduated"):
         if f in payload and payload[f] is not None:
             setattr(c, f, payload[f])
     audit(db, user, "update_classroom", target=f"班级#{class_id}")
@@ -162,7 +172,6 @@ def update_classroom(class_id: int, payload: dict, user: User = Depends(get_curr
 
 @router.delete("/api/classrooms/{class_id}")
 def delete_classroom(class_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # 只有管理员可以删除班级
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以删除班级")
     c = db.get(Classroom, class_id)
@@ -176,10 +185,11 @@ def delete_classroom(class_id: int, user: User = Depends(get_current_user), db: 
 # ---------------- 学生 ----------------
 @router.get("/api/students")
 def list_students(
-    class_id: int = None,
+    class_id: int | None = None,
     keyword: str = "",
     page: int = 1,
     page_size: int = 20,
+    dropped_out: str = "",
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -187,12 +197,16 @@ def list_students(
     is_admin = user.role == "admin"
     query = filter_students_by_teacher(db, user.id, is_admin)
     if class_id:
-        # 教师只能查看自己负责班级的学生
         if not is_admin and not is_teacher_class_owner(db, user.id, class_id):
             raise HTTPException(status_code=403, detail="无权查看该班级的学生")
         query = query.filter(Student.class_id == class_id)
     if keyword:
         query = query.filter(Student.name.contains(keyword) | Student.student_no.contains(keyword))
+    # 退学筛选："" 全部；"false" 在籍（未退学）；"true" 已退学
+    if dropped_out == "false":
+        query = query.filter(Student.is_dropped_out.is_(False))
+    elif dropped_out == "true":
+        query = query.filter(Student.is_dropped_out.is_(True))
     total = query.count()
     rows = (
         query.order_by(Student.id)
@@ -210,6 +224,9 @@ def create_student(payload: dict, user: User = Depends(get_current_user), db: Se
     class_id = payload.get("class_id")
     if not name or not student_no:
         raise HTTPException(status_code=400, detail="姓名和学号不能为空")
+    # 已毕业班级不可再添加学生
+    if class_id:
+        ensure_class_operable(db, class_id)
     # 教师只能在自己负责的班级添加学生
     if user.role != "admin" and class_id and not is_teacher_class_owner(db, user.id, class_id):
         raise HTTPException(status_code=403, detail="无权在该班级添加学生")
@@ -226,147 +243,10 @@ def create_student(payload: dict, user: User = Depends(get_current_user), db: Se
         parent_name=payload.get("parent_name"),
         parent_phone=payload.get("parent_phone"),
         student_type=payload.get("student_type", "day"),
-    )
-    db.add(s)
-    audit(db, user, "create_student", target=f"新增学生-{s.name} ({s.student_no})")
-    db.commit()
-    db.refresh(s)
-    return _student_out(db, s)
-
-
-@router.put("/api/students/{student_id}")
-def update_student(student_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    s = db.get(Student, student_id)
-    if not s:
-        raise HTTPException(status_code=404, detail="学生不存在")
-    # 教师只能修改自己负责班级的学生
-    if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
-        raise HTTPException(status_code=403, detail="无权修改该学生")
-    for f in ("name", "gender", "birth_date", "class_id", "major", "parent_name", "parent_phone", "student_type"):
-        if f in payload and payload[f] is not None:
-            # 教师不能修改学生的班级归属
-            if f == "class_id" and user.role != "admin":
-                raise HTTPException(status_code=403, detail="教师无权修改学生班级")
-            setattr(s, f, payload[f])
-    audit(db, user, "update_student", target=f"学生#{student_id}-{s.name}")
-    db.commit()
-    db.refresh(s)
-    return _student_out(db, s)
-
-
-@router.delete("/api/students/{student_id}")
-def delete_student(student_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    s = db.get(Student, student_id)
-    if not s:
-        raise HTTPException(status_code=404, detail="学生不存在")
-    # 教师只能删除自己负责班级的学生
-    if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
-        raise HTTPException(status_code=403, detail="无权删除该学生")
-    db.delete(s)
-    audit(db, user, "delete_student", target=f"学生#{student_id}")
-    db.commit()
-    return {"ok": True}
-    items = []
-    for c in rows:
-        d = to_dict(c)
-        d["student_count"] = db.query(Student).filter(Student.class_id == c.id).count()
-        items.append(d)
-    return {"items": items, "total": len(rows)}
-
-
-@router.post("/api/classrooms")
-def create_classroom(payload: dict, _=Depends(admin_dep), db: Session = Depends(get_db)):
-    name = (payload.get("name") or "").strip()
-    code = (payload.get("code") or "").strip()
-    if not name or not code:
-        raise HTTPException(status_code=400, detail="班级名称和代码不能为空")
-    if db.query(Classroom).filter(Classroom.code == code).first():
-        raise HTTPException(status_code=400, detail="班级代码已存在")
-    c = Classroom(
-        school_id=payload.get("school_id"),
-        name=name,
-        code=code,
-        major=payload.get("major"),
-        grade=payload.get("grade"),
-        teacher_id=payload.get("teacher_id"),
-    )
-    db.add(c)
-    db.commit()
-    db.refresh(c)
-    return to_dict(c)
-
-
-@router.put("/api/classrooms/{classroom_id}")
-def update_classroom(classroom_id: int, payload: dict, _=Depends(admin_dep), db: Session = Depends(get_db)):
-    c = db.get(Classroom, classroom_id)
-    if not c:
-        raise HTTPException(status_code=404, detail="班级不存在")
-    for f in ("name", "code", "major", "grade", "teacher_id", "school_id"):
-        if f in payload and payload[f] is not None:
-            setattr(c, f, payload[f])
-    db.commit()
-    return to_dict(c)
-
-
-@router.delete("/api/classrooms/{classroom_id}")
-def delete_classroom(classroom_id: int, user=Depends(admin_dep), db: Session = Depends(get_db)):
-    c = db.get(Classroom, classroom_id)
-    if c:
-        audit(db, user, "delete_classroom", target=f"{c.name} ({c.code})")
-        db.delete(c)
-        db.commit()
-    return {"ok": True}
-
-
-# ---------------- 学生 ----------------
-@router.get("/api/students")
-def list_students(
-    page: int = 1,
-    page_size: int = 20,
-    keyword: str = "",
-    class_id: int | None = None,
-    _=Depends(admin_dep),
-    db: Session = Depends(get_db),
-):
-    q = db.query(Student)
-    if class_id:
-        q = q.filter(Student.class_id == class_id)
-    if keyword:
-        q = q.filter(Student.name.contains(keyword) | Student.student_no.contains(keyword))
-    total = q.count()
-    rows = (
-        q.order_by(Student.id)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
-    return {"items": [_student_out(db, s) for s in rows], "total": total}
-
-
-@router.post("/api/students")
-def create_student(payload: dict, _=Depends(admin_dep), db: Session = Depends(get_db)):
-    name = (payload.get("name") or "").strip()
-    student_no = (payload.get("student_no") or "").strip()
-    if not name or not student_no:
-        raise HTTPException(status_code=400, detail="姓名和学号不能为空")
-    if db.query(Student).filter(Student.student_no == student_no).first():
-        raise HTTPException(status_code=400, detail="学号已存在")
-    class_id = payload.get("class_id")
-    s = Student(
-        name=name,
-        student_no=student_no,
-        gender=payload.get("gender", "男"),
-        birth_date=payload.get("birth_date"),
-        class_id=class_id,
-        school_id=payload.get("school_id"),
-        major=payload.get("major"),
-        parent_name=payload.get("parent_name"),
-        parent_phone=payload.get("parent_phone"),
-        student_type=payload.get("student_type", "day"),
+        is_dropped_out=bool(payload.get("is_dropped_out", False)),
     )
     db.add(s)
     db.flush()
-
     # 自动同步生成学生登录账号（班级 + 姓名，默认密码 123456）
     exists_user = (
         db.query(User)
@@ -383,23 +263,35 @@ def create_student(payload: dict, _=Depends(admin_dep), db: Session = Depends(ge
                 class_id=class_id,
             )
         )
-
+    audit(db, user, "create_student", target=f"新增学生-{s.name} ({s.student_no})")
     db.commit()
     db.refresh(s)
     return _student_out(db, s)
 
 
 @router.put("/api/students/{student_id}")
-def update_student(student_id: int, payload: dict, user=Depends(admin_dep), db: Session = Depends(get_db)):
+def update_student(student_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     s = db.get(Student, student_id)
     if not s:
         raise HTTPException(status_code=404, detail="学生不存在")
+    # 教师只能修改自己负责班级的学生
+    if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+        raise HTTPException(status_code=403, detail="无权修改该学生")
+    # 退学/毕业限制：已毕业班级的学生不可修改；已退学学生仅允许改回在籍（重新激活）
+    if s.class_id:
+        cls = db.get(Classroom, s.class_id)
+        if cls and cls.is_graduated:
+            raise HTTPException(status_code=403, detail="该学生所在班级已毕业，无法修改")
+    if s.is_dropped_out and payload.get("is_dropped_out") is not False:
+        raise HTTPException(status_code=403, detail="该学生已退学，无法修改（可将其改回在籍后操作）")
     old_type = s.student_type
     for f in (
-        "name", "gender", "birth_date", "class_id", "school_id", "major",
-        "parent_name", "parent_phone", "student_type", "status", "student_no",
+        "name", "gender", "birth_date", "class_id", "major",
+        "parent_name", "parent_phone", "student_type", "is_dropped_out",
     ):
         if f in payload and payload[f] is not None:
+            if f == "class_id" and user.role != "admin":
+                raise HTTPException(status_code=403, detail="教师无权修改学生班级")
             setattr(s, f, payload[f])
     # 记录寄宿/通学状态变更
     new_type = payload.get("student_type")
@@ -410,27 +302,38 @@ def update_student(student_id: int, payload: dict, user=Depends(admin_dep), db: 
             new_type=new_type,
             changed_by=user.id,
         ))
+    audit(db, user, "update_student", target=f"学生#{student_id}-{s.name}")
     db.commit()
     db.refresh(s)
     return _student_out(db, s)
 
 
 @router.delete("/api/students/{student_id}")
-def delete_student(student_id: int, user=Depends(admin_dep), db: Session = Depends(get_db)):
+def delete_student(student_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     s = db.get(Student, student_id)
-    if s:
-        audit(db, user, "delete_student", target=f"{s.name} ({s.student_no})")
-        db.delete(s)
-        db.commit()
+    if not s:
+        raise HTTPException(status_code=404, detail="学生不存在")
+    # 教师只能删除自己负责班级的学生
+    if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+        raise HTTPException(status_code=403, detail="无权删除该学生")
+    # 退学/毕业限制
+    ensure_student_operable(db, student_id)
+    db.delete(s)
+    audit(db, user, "delete_student", target=f"学生#{student_id}")
+    db.commit()
     return {"ok": True}
 
 
 @router.put("/api/students/{student_id}/password")
-def reset_student_password(student_id: int, payload: dict, user=Depends(admin_dep), db: Session = Depends(get_db)):
+def reset_student_password(student_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """教师重置/修改学生密码（默认 123456）。"""
     s = db.get(Student, student_id)
     if not s:
         raise HTTPException(status_code=404, detail="学生不存在")
+    if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+        raise HTTPException(status_code=403, detail="无权重置该学生密码")
+    # 退学/毕业限制
+    ensure_student_operable(db, student_id)
     new_pwd = payload.get("password") or "123456"
     u = (
         db.query(User)
@@ -462,20 +365,23 @@ _AVATAR_ALLOWED = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 async def upload_student_avatar(
     student_id: int,
     file: UploadFile = File(...),
-    user=Depends(admin_dep),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """教师为学生上传头像。"""
     s = db.get(Student, student_id)
     if not s:
         raise HTTPException(status_code=404, detail="学生不存在")
+    if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
+        raise HTTPException(status_code=403, detail="无权为该学生上传头像")
+    # 退学/毕业限制
+    ensure_student_operable(db, student_id)
 
     original = file.filename or "avatar"
     ext = os.path.splitext(original)[1].lower()
     if ext not in _AVATAR_ALLOWED:
         raise HTTPException(status_code=400, detail=f"仅支持图片格式：{'、'.join(sorted(_AVATAR_ALLOWED))}")
 
-    # 查找学生对应的 User
     student_user = (
         db.query(User)
         .filter(User.role == "student", User.class_id == s.class_id, User.name == s.name)
@@ -521,9 +427,17 @@ async def upload_student_avatar(
 
 
 @router.get("/api/students/board-type-stats")
-def board_type_stats(class_id: int | None = None, _=Depends(admin_dep), db: Session = Depends(get_db)):
-    """通学生 / 寄宿生人数对比及明细名单。"""
-    q = db.query(Student)
+def board_type_stats(class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """通学生 / 寄宿生人数对比及明细名单（不含退学学生）。"""
+    q = db.query(Student).filter(Student.is_dropped_out.is_(False))
+    # 教师只能看自己负责班级
+    if user.role != "admin":
+        from app.permissions import get_teacher_class_ids
+        class_ids = get_teacher_class_ids(db, user.id)
+        if class_ids:
+            q = q.filter(Student.class_id.in_(class_ids))
+        else:
+            q = q.filter(False)
     if class_id:
         q = q.filter(Student.class_id == class_id)
     students = q.all()
@@ -554,7 +468,7 @@ def _fmt_dt(dt):
 
 
 @router.get("/api/students/{student_id}/board-history")
-def get_board_history(student_id: int, _=Depends(admin_dep), db: Session = Depends(get_db)):
+def get_board_history(student_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """获取学生寄宿/通学状态：当前状态、各时间段（含起始/结束时间）与变更日志。"""
     student = db.get(Student, student_id)
     if not student:
@@ -567,7 +481,6 @@ def get_board_history(student_id: int, _=Depends(admin_dep), db: Session = Depen
         .all()
     )
 
-    # 变更日志（倒序，最新在前）
     items = []
     for r in reversed(changes):
         d = to_dict(r)
@@ -579,7 +492,6 @@ def get_board_history(student_id: int, _=Depends(admin_dep), db: Session = Depen
             d["changed_by_name"] = u.name if u else ""
         items.append(d)
 
-    # 时间段（正序，从最早到当前，每段含起始/结束时间，最后一段 end=None 表示"至今"）
     base_start = _fmt_dt(student.created_at) or "建档"
     periods = []
     if not changes:
@@ -590,7 +502,6 @@ def get_board_history(student_id: int, _=Depends(admin_dep), db: Session = Depen
             "end": None,
         })
     else:
-        # 首段：初始类型（首次变更前）
         periods.append({
             "type": changes[0].old_type,
             "label": _board_label(changes[0].old_type),
@@ -606,7 +517,6 @@ def get_board_history(student_id: int, _=Depends(admin_dep), db: Session = Depen
                 "end": end,
             })
 
-    # 当前状态
     current = {
         "type": student.student_type,
         "label": _board_label(student.student_type),
@@ -617,16 +527,31 @@ def get_board_history(student_id: int, _=Depends(admin_dep), db: Session = Depen
 
 
 @router.get("/api/students/export")
-def export_students(class_id: int | None = None, _=Depends(admin_dep), db: Session = Depends(get_db)):
+def export_students(class_id: int | None = None, dropped_out: str = "", user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Student)
+    # 教师只能导出自己负责班级的学生
+    if user.role != "admin":
+        from app.permissions import get_teacher_class_ids
+        class_ids = get_teacher_class_ids(db, user.id)
+        if class_ids:
+            q = q.filter(Student.class_id.in_(class_ids))
+        else:
+            q = q.filter(False)
     if class_id:
         q = q.filter(Student.class_id == class_id)
+    # 默认导出在籍学生；dropped_out="true" 时导出已退学；"all" 导出全部
+    if dropped_out == "true":
+        q = q.filter(Student.is_dropped_out.is_(True))
+    elif dropped_out == "all":
+        pass
+    else:
+        q = q.filter(Student.is_dropped_out.is_(False))
     rows = q.order_by(Student.id).all()
 
     wb = Workbook()
     ws = wb.active
     ws.title = "学生花名册"
-    headers = ["学号", "姓名", "性别", "出生日期", "专业", "家长姓名", "家长电话", "类型"]
+    headers = ["学号", "姓名", "性别", "出生日期", "专业", "家长姓名", "家长电话", "类型", "是否退学"]
     ws.append(headers)
     for s in rows:
         ws.append(
@@ -639,6 +564,7 @@ def export_students(class_id: int | None = None, _=Depends(admin_dep), db: Sessi
                 s.parent_name,
                 s.parent_phone,
                 "通学生" if s.student_type == "day" else "寄宿生",
+                "是" if s.is_dropped_out else "否",
             ]
         )
     buf = BytesIO()

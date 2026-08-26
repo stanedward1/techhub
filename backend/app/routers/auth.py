@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.audit import audit
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Classroom, User
+from app.models import Classroom, Student, User
 from app.schemas import LoginRequest, PasswordRequest, RegisterRequest
 from app.security import (
     create_access_token,
@@ -95,6 +95,19 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     # 锁定检查（密码正确也要检查，防止锁定期间绕过）
     _check_locked(user)
 
+    # 退学/毕业学生禁止登录
+    if user.role == "student" and user.class_id:
+        cls = db.get(Classroom, user.class_id)
+        if cls and cls.is_graduated:
+            raise HTTPException(status_code=403, detail="该班级已毕业，无法登录")
+        stu = (
+            db.query(Student)
+            .filter(Student.class_id == user.class_id, Student.name == user.name)
+            .first()
+        )
+        if stu and stu.is_dropped_out:
+            raise HTTPException(status_code=403, detail="该学生已退学，无法登录")
+
     _reset_login_state(user)
     db.commit()
 
@@ -111,6 +124,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     """学生自助注册（仅允许系统中尚不存在「班级+姓名」的学生）。"""
     if payload.class_id and not db.get(Classroom, payload.class_id):
         raise HTTPException(status_code=400, detail="所选班级不存在")
+
+    # 已毕业班级不可再注册新学生
+    if payload.class_id:
+        cls = db.get(Classroom, payload.class_id)
+        if cls and cls.is_graduated:
+            raise HTTPException(status_code=403, detail="该班级已毕业，无法注册")
 
     # 校验是否已存在「班级 + 姓名」的学生账号
     exists = (

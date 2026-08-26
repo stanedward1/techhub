@@ -9,11 +9,13 @@ from app.models import (
     Assignment,
     Classroom,
     ExcellentWork,
+    Student,
     Submission,
     SubmissionComment,
     User,
     WorkComment,
 )
+from app.permissions import ensure_class_operable, ensure_student_operable
 from app.utils import to_dict
 
 router = APIRouter(prefix="/api/homework", tags=["作业提交平台"])
@@ -22,6 +24,21 @@ router = APIRouter(prefix="/api/homework", tags=["作业提交平台"])
 def _check_student_access(assignment: Assignment, user: User):
     if user.role == "student" and assignment.class_id != user.class_id:
         raise HTTPException(status_code=403, detail="无权访问该任务")
+
+
+def _ensure_submission_operable(db: Session, submission: Submission):
+    """校验提交对应的学生是否可被教师操作（退学/毕业限制）。"""
+    stu_user = db.get(User, submission.student_id)
+    assignment = db.get(Assignment, submission.assignment_id)
+    class_id = assignment.class_id if assignment else None
+    if stu_user and class_id:
+        student = (
+            db.query(Student)
+            .filter(Student.class_id == class_id, Student.name == stu_user.name)
+            .first()
+        )
+        if student:
+            ensure_student_operable(db, student.id)
 
 
 # ---------------- 作业任务 ----------------
@@ -86,6 +103,8 @@ def create_assignment(payload: dict, user: User = Depends(require_teacher), db: 
     class_id = payload.get("class_id")
     if not class_id or not db.get(Classroom, class_id):
         raise HTTPException(status_code=400, detail="请选择下发班级")
+    # 毕业限制：毕业班级不可再布置作业
+    ensure_class_operable(db, class_id)
 
     a = Assignment(
         title=title,
@@ -116,6 +135,8 @@ def update_assignment(
         if field in payload and payload[field] is not None:
             setattr(a, field, payload[field])
     if payload.get("class_id") and db.get(Classroom, payload["class_id"]):
+        # 毕业限制：不可将作业转移到已毕业班级
+        ensure_class_operable(db, payload["class_id"])
         a.class_id = payload["class_id"]
     audit(db, user, "update_assignment", target=f"作业#{assignment_id}")
     db.commit()
@@ -222,6 +243,8 @@ def add_submission_comment(
     s = db.get(Submission, submission_id)
     if not s:
         raise HTTPException(status_code=404, detail="提交不存在")
+    # 退学/毕业限制
+    _ensure_submission_operable(db, s)
     content = (payload.get("content") or "").strip()
     if not content:
         raise HTTPException(status_code=400, detail="点评内容不能为空")
@@ -260,8 +283,12 @@ def delete_submission_comment(
         raise HTTPException(status_code=404, detail="点评不存在")
     if user.role != "admin" and c.teacher_id != user.id:
         raise HTTPException(status_code=403, detail="无权删除该点评")
+    # 退学/毕业限制
+    s = db.get(Submission, submission_id)
+    if s:
+        _ensure_submission_operable(db, s)
     db.delete(c)
-    stu = db.get(User, s.student_id)
+    stu = db.get(User, s.student_id) if s else None
     stu_name = stu.name if stu else ""
     audit(db, user, "delete_submission_comment", target=f"删除点评-{stu_name}")
     db.commit()
@@ -342,6 +369,8 @@ def mark_excellent(
     s = db.get(Submission, submission_id)
     if not s:
         raise HTTPException(status_code=404, detail="提交不存在")
+    # 退学/毕业限制
+    _ensure_submission_operable(db, s)
     existing = db.query(ExcellentWork).filter(ExcellentWork.submission_id == submission_id).first()
     if existing:
         raise HTTPException(status_code=400, detail="该作品已入选优秀")
@@ -359,6 +388,10 @@ def unmark_excellent(
 ):
     e = db.query(ExcellentWork).filter(ExcellentWork.submission_id == submission_id).first()
     if e:
+        # 退学/毕业限制
+        s = db.get(Submission, submission_id)
+        if s:
+            _ensure_submission_operable(db, s)
         db.delete(e)
         audit(db, user, "unmark_excellent", target=f"取消优秀-提交#{submission_id}")
         db.commit()

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -25,6 +25,7 @@ class Classroom(Base):
     major = Column(String(100))
     grade = Column(String(50))
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    is_graduated = Column(Boolean, nullable=False, default=False, server_default="0")  # 是否毕业
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -44,5 +45,6 @@ class Student(Base):
     student_type = Column(String(20), default="day")  # day 通学生 / boarding 寄宿生
     avatar = Column(String(255))
     status = Column(String(20), default="active")
+    is_dropped_out = Column(Boolean, nullable=False, default=False, server_default="0")  # 是否退学
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

@@ -46,9 +46,9 @@ const students = ref([])
 const localClassId = ref(props.classId)
 
 onMounted(async () => {
-  // 加载班级列表（后端已按教师角色过滤）
+  // 加载班级列表（后端已按教师角色过滤；仅返回未毕业班级，避免对毕业班级学生操作）
   try {
-    const res = await studentApi.classrooms()
+    const res = await studentApi.classrooms({ graduated: 'false' })
     classes.value = res.items || []
   } catch (e) {}
   loadStudents(localClassId.value)
@@ -75,7 +75,7 @@ function onClassChange(val) {
 async function loadStudents(classIdArg) {
   // classIdArg 优先（用户刚选的班级），否则用本地状态
   const cid = classIdArg !== undefined ? classIdArg : localClassId.value
-  const params = { page: 1, page_size: 9999 }
+  const params = { page: 1, page_size: 9999, dropped_out: 'false' }
   if (props.showClassFilter && cid) {
     params.class_id = cid
   }

@@ -17,13 +17,22 @@ from app.models import (
     User,
     WorkLog,
 )
-from app.audit import attach_student, serialize_list_with_students, audit, student_name
+from app.audit import (
+    attach_student,
+    serialize_list_with_students,
+    audit,
+    student_name,
+    active_student_id_query,
+    active_classroom_id_query,
+)
 from app.utils import to_dict
 from app.permissions import (
     get_teacher_class_ids,
     is_student_in_teacher_classes,
     is_teacher_class_owner,
     apply_student_class_filter,
+    ensure_student_operable,
+    ensure_class_operable,
 )
 
 router = APIRouter(tags=["班级日志"])
@@ -32,8 +41,10 @@ dep = require_teacher
 
 
 def _filter_student_query(db: Session, model, user: User):
-    """教师只能查询自己班级学生的记录；管理员查询全部。"""
+    """教师只能查询自己班级学生的记录；管理员查询全部。均排除退学学生。"""
     q = db.query(model)
+    # 排除退学学生
+    q = q.filter(model.student_id.in_(active_student_id_query(db)))
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
         if class_ids:
@@ -45,7 +56,9 @@ def _filter_student_query(db: Session, model, user: User):
 
 
 def _check_student_permission(db: Session, user: User, student_id: int):
-    """教师只能操作自己班级学生的记录。"""
+    """教师只能操作自己班级学生的记录；退学/毕业学生不可操作（教师与管理员均受限）。"""
+    # 退学/毕业限制
+    ensure_student_operable(db, student_id)
     if user.role != "admin" and not is_student_in_teacher_classes(db, user.id, student_id):
         raise HTTPException(status_code=403, detail="无权操作该学生的记录")
 
@@ -80,7 +93,7 @@ def create_work_log(payload: dict, user=Depends(dep), db: Session = Depends(get_
 
 
 @router.put("/api/work-logs/{log_id}")
-def update_work_log(log_id: int, payload: dict, _=Depends(dep), db: Session = Depends(get_db)):
+def update_work_log(log_id: int, payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(WorkLog, log_id)
     if not x:
         raise HTTPException(status_code=404, detail="记录不存在")
@@ -94,7 +107,7 @@ def update_work_log(log_id: int, payload: dict, _=Depends(dep), db: Session = De
 
 
 @router.delete("/api/work-logs/{log_id}")
-def delete_work_log(log_id: int, _=Depends(dep), db: Session = Depends(get_db)):
+def delete_work_log(log_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(WorkLog, log_id)
     if x:
         db.delete(x)
@@ -162,6 +175,8 @@ _plan_crud(TeacherPlan, "teacher-plans", router)
 @router.get("/api/schedules")
 def list_schedules(class_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Schedule)
+    # 排除毕业班级的课程表
+    q = q.filter(Schedule.class_id.in_(active_classroom_id_query(db)))
     # 教师只能查看自己负责班级的课程表
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
@@ -182,6 +197,8 @@ def list_schedules(class_id: int | None = None, user: User = Depends(get_current
 def create_schedule(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not payload.get("class_id"):
         raise HTTPException(status_code=400, detail="请选择班级")
+    # 毕业限制
+    ensure_class_operable(db, payload["class_id"])
     # 教师只能为自己负责的班级排课
     _check_class_permission(db, user, payload["class_id"])
     x = Schedule(
@@ -202,6 +219,8 @@ def create_schedule(payload: dict, user: User = Depends(get_current_user), db: S
 def delete_schedule(schedule_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Schedule, schedule_id)
     if x:
+        # 毕业限制
+        ensure_class_operable(db, x.class_id)
         # 教师只能删除自己负责班级的课程
         _check_class_permission(db, user, x.class_id)
         db.delete(x)
@@ -214,6 +233,8 @@ def delete_schedule(schedule_id: int, user: User = Depends(get_current_user), db
 @router.get("/api/activities")
 def list_activities(page: int = 1, page_size: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Activity)
+    # 排除毕业班级的活动
+    q = q.filter(Activity.class_id.in_(active_classroom_id_query(db)))
     # 教师只能查看自己负责班级的活动
     if user.role != "admin":
         class_ids = get_teacher_class_ids(db, user.id)
@@ -231,6 +252,9 @@ def create_activity(payload: dict, user: User = Depends(get_current_user), db: S
     title = (payload.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="活动标题不能为空")
+    # 毕业限制
+    if payload.get("class_id"):
+        ensure_class_operable(db, payload["class_id"])
     # 教师只能为自己负责的班级创建活动
     if payload.get("class_id"):
         _check_class_permission(db, user, payload["class_id"])
@@ -251,6 +275,9 @@ def create_activity(payload: dict, user: User = Depends(get_current_user), db: S
 def delete_activity(activity_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     x = db.get(Activity, activity_id)
     if x:
+        # 毕业限制
+        if x.class_id:
+            ensure_class_operable(db, x.class_id)
         # 教师只能删除自己负责班级的活动
         if x.class_id:
             _check_class_permission(db, user, x.class_id)

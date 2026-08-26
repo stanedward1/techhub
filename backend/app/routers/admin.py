@@ -227,15 +227,20 @@ def list_audit_logs(
 # ---------------- 看板统计 ----------------
 @router.get("/api/stats/dashboard")
 def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
-    # 教师只能查看自己负责班级的数据；管理员查看全校
+    # 教师只能查看自己负责班级的数据；管理员查看全校。
+    # 均排除毕业班级与退学学生（看板不展示）。
     if user.role != "admin":
-        class_ids = [c.id for c in db.query(Classroom).filter(Classroom.teacher_id == user.id).all()]
+        class_ids = [c.id for c in db.query(Classroom).filter(
+            Classroom.teacher_id == user.id, Classroom.is_graduated.is_(False)
+        ).all()]
         student_ids = []
         if class_ids:
-            student_ids = [s.id for s in db.query(Student).filter(Student.class_id.in_(class_ids)).all()]
+            student_ids = [s.id for s in db.query(Student).filter(
+                Student.class_id.in_(class_ids), Student.is_dropped_out.is_(False)
+            ).all()]
     else:
-        class_ids = None
-        student_ids = None
+        class_ids = [c.id for c in db.query(Classroom).filter(Classroom.is_graduated.is_(False)).all()]
+        student_ids = [s.id for s in db.query(Student).filter(Student.is_dropped_out.is_(False)).all()]
 
     def _count(model, id_col=None, ids=None):
         q = db.query(model)
@@ -243,8 +248,8 @@ def dashboard(user=Depends(admin_dep), db: Session = Depends(get_db)):
             q = q.filter(id_col.in_(ids))
         return q.count()
 
-    student_count = db.query(Student).count() if user.role == "admin" else len(student_ids)
-    class_count = db.query(Classroom).count() if user.role == "admin" else len(class_ids)
+    student_count = len(student_ids)
+    class_count = len(class_ids)
     assignment_count = db.query(Assignment).count()
     submission_count = db.query(Submission).count()
     resource_count = db.query(Resource).count()

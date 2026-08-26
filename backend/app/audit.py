@@ -5,8 +5,18 @@
 """
 from sqlalchemy.orm import Session
 
-from app.models import OperationLog, Student, User
+from app.models import Classroom, OperationLog, Student, User
 from app.utils import to_dict
+
+
+def active_student_id_query(db: Session):
+    """在籍（未退学）学生 id 子查询，供 `Model.student_id.in_(...)` 过滤使用。"""
+    return db.query(Student.id).filter(Student.is_dropped_out.is_(False))
+
+
+def active_classroom_id_query(db: Session):
+    """未毕业班级 id 子查询，供 `Model.class_id.in_(...)` 过滤使用。"""
+    return db.query(Classroom.id).filter(Classroom.is_graduated.is_(False))
 
 
 def batch_student_map(db: Session, student_ids) -> dict:

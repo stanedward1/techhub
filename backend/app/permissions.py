@@ -1,7 +1,45 @@
 """班级权限检查模块"""
 from typing import List, Optional
+
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
 from app.models import Classroom, Student, User
+
+
+def ensure_student_operable(db: Session, student_id: int) -> Student:
+    """校验学生是否可被教师/管理员操作。
+
+    规则：
+    - 学生不存在 -> 404
+    - 学生已退学 -> 403（不可再对该生进行各项操作）
+    - 学生所在班级已毕业 -> 403（不可再对该班所有学生进行各项操作）
+
+    返回对应的 Student 实例，供调用方复用。
+    """
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="学生不存在")
+    if student.is_dropped_out:
+        raise HTTPException(status_code=403, detail="该学生已退学，无法进行操作")
+    if student.class_id:
+        cls = db.get(Classroom, student.class_id)
+        if cls and cls.is_graduated:
+            raise HTTPException(status_code=403, detail="该学生所在班级已毕业，无法进行操作")
+    return student
+
+
+def ensure_class_operable(db: Session, class_id: int) -> Classroom:
+    """校验班级是否可被教师/管理员操作（未毕业）。
+
+    班级已毕业 -> 403；班级不存在 -> 404。返回 Classroom 实例。
+    """
+    cls = db.get(Classroom, class_id)
+    if not cls:
+        raise HTTPException(status_code=404, detail="班级不存在")
+    if cls.is_graduated:
+        raise HTTPException(status_code=403, detail="该班级已毕业，无法进行操作")
+    return cls
 
 
 def get_teacher_class_ids(db: Session, teacher_id: int) -> List[int]:

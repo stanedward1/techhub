@@ -9,8 +9,13 @@ router = APIRouter(prefix="/api/meta", tags=["公共"])
 
 @router.get("/classes")
 def class_options(db: Session = Depends(get_db)):
-    """班级下拉选项（注册时使用，无需登录）。"""
-    rows = db.query(Classroom).order_by(Classroom.id).all()
+    """班级下拉选项（注册时使用，无需登录）。仅返回未毕业班级。"""
+    rows = (
+        db.query(Classroom)
+        .filter(Classroom.is_graduated.is_(False))
+        .order_by(Classroom.id)
+        .all()
+    )
     return {"items": [{"id": c.id, "name": c.name, "major": c.major} for c in rows]}
 
 

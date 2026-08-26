@@ -43,7 +43,7 @@ export const homeworkApi = {
 // ============ 基础数据 ============
 export const studentApi = {
   schools: () => request.get('/api/schools'),
-  classrooms: () => request.get('/api/classrooms'),
+  classrooms: (params) => request.get('/api/classrooms', { params }),
   createClassroom: (data) => request.post('/api/classrooms', data),
   updateClassroom: (id, data) => request.put(`/api/classrooms/${id}`, data),
   deleteClassroom: (id) => request.delete(`/api/classrooms/${id}`),
