@@ -19,6 +19,7 @@ cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate | Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-dev.txt   # 运行测试需额外安装
 cp .env.example .env          # 按需修改 SECRET_KEY 等
 python -m app.seed            # 初始化假数据（可选）
 python run.py                 # 启动，默认 :8080
@@ -32,7 +33,16 @@ npm install
 npm run dev                   # 启动，默认 :5173，代理 /api → :8080
 ```
 
-### 1.4 测试
+### 1.4 Docker（推荐）
+
+```bash
+cd techhub
+docker compose up -d --build  # 构建并启动前后端
+docker compose logs -f backend
+docker compose down           # 停止
+```
+
+### 1.5 测试
 
 ```bash
 cd backend
@@ -73,9 +83,10 @@ python -m pytest tests/ -v
 
 ### 3.4 模型变更
 
-- 新增字段：在模型文件中添加列定义，同时更新 `database.py` 的 `run_migrations()` 函数。
-- 新增表：在模型文件中定义新类，更新 `models/__init__.py` 导出，确保 `create_all` 能创建。
-- 生产环境建议引入 Alembic 做正式迁移管理。
+- 新增字段/表：修改模型定义后，必须配套新增 Alembic migration（`backend/alembic/versions/`）
+- 生成迁移脚本：`cd backend && alembic revision --autogenerate -m "描述"`，人工核对后提交
+- 应用到本地库：`alembic upgrade head`（本地启动或 Docker 启动会自动执行）
+- 确保「迁移链」与「模型 schema」保持一致，避免依赖 `create_all` 兜底而遗漏加列
 
 ### 3.5 文件上传
 
@@ -160,9 +171,9 @@ docs: 补充架构设计文档
 
 1. `cd backend && python -m pytest tests/ -v` 全绿
 2. `cd frontend && npm run build` 构建成功
-3. 生产 `.env` 覆盖 `SECRET_KEY`、`DATABASE_URL`
-4. 数据库迁移（`run_migrations()` 自动执行，或引入 Alembic 后执行 `alembic upgrade head`）
-5. 部署后端 + 前端静态产物，验证 `/health` 与登录链路
+3. 生产 `.env` 覆盖 `SECRET_KEY`、`DATABASE_URL`，并设置 `ENV=production`
+4. 数据库迁移：`cd backend && alembic upgrade head`
+5. Docker 部署：`docker compose up -d --build`，验证 `/health` 与登录链路
 6. 打 tag：`git tag v1.0.0 && git push --tags`
 
 ## 8. 文档维护

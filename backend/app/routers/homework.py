@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.audit import batch_user_map, audit, student_name
+from app.audit import batch_user_map, audit
 from app.database import get_db
 from app.deps import get_current_user, require_student, require_teacher
 from app.models import (

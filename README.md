@@ -91,15 +91,17 @@ TechHub 将**在线作业提交平台**、**班级日志管理系统**、**教�
 | ---- | ---- | ---- |
 | 后端框架 | FastAPI | 0.115 |
 | ORM | SQLAlchemy | 2.0 |
-| 数据库 | MySQL/MariaDB（默认，`techhub` 库，utf8mb4） | 11.8+ |
+| 数据库 | SQLite（默认，零配置）｜可切换 MySQL/MariaDB/PostgreSQL | — |
+| 数据库迁移 | Alembic | 1.13 |
 | 认证 | JWT（python-jose）+ bcrypt | — |
 | 前端框架 | Vue 3（Composition API） | 3.4 |
 | 构建工具 | Vite | 5.4 |
 | UI 组件库 | Element Plus | 2.7 |
-| 数据可视化 | ECharts（按需引入） | 5.5 |
+| 数据可视化 | ECharts | 5.5 |
 | Markdown | marked + DOMPurify（XSS 防护） | 12 |
 | Excel 处理 | openpyxl | 3.1 |
 | 测试 | pytest + FastAPI TestClient | — |
+| 部署 | Docker + Nginx | — |
 
 ## 项目结构
 
@@ -134,22 +136,28 @@ techhub/
 │   │       ├── admin.py        #   账号管理 / 系统设置 / 数据看板
 │   │       └── uploads.py      #   通用文件上传
 │   ├── tests/                  # pytest 自动化测试
-│   ├── requirements.txt
+│   ├── requirements.txt        # 运行时依赖
+│   ├── requirements-dev.txt    # 开发/测试依赖（pytest、httpx）
 │   ├── run.py                  # 启动脚本（端口 8080）
+│   ├── Dockerfile              # 后端镜像
+│   ├── docker-entrypoint.py    # 容器入口（迁移 + 首次 seed + 启动）
 │   └── .env.example            # 环境变量模板
 ├── frontend/                   # Vue 3 前端
 │   ├── src/
 │   │   ├── api/                # Axios 封装 + 接口定义
 │   │   ├── router/             # 路由 + 角色守卫
-│   │   ├── utils/              # 认证工具、ECharts 封装
+│   │   ├── utils/              # 认证工具
 │   │   ├── composables/        # 可组合函数（useSort）
 │   │   ├── components/         # Markdown / MarkdownEditor / StudentSelect（班级联动）/ SortBar
 │   │   ├── layout/             # AdminLayout（可折叠侧边栏）/ StudentLayout
 │   │   └── views/              # 页面（student/ + admin/，共 33 个页面）
 │   ├── vite.config.js          # /api 与 /uploads 代理 + 构建优化
+│   ├── Dockerfile              # 前端镜像（Node 构建 + Nginx 托管）
+│   ├── nginx.conf              # Nginx 配置（静态托管 + 反代后端）
 │   └── package.json
 ├── docs/                       # 架构设计 / 开发规范
-├── start.sh                    # 一键启动脚本（架构检测 + 依赖安装 + 服务启动）
+├── docker-compose.yml          # 一键编排后端 + 前端
+├── start.sh                    # 一键启动脚本（Linux 本机）
 └── README.md
 ```
 
@@ -157,7 +165,44 @@ techhub/
 
 ## 开发环境快速开始
 
-### 🚀 一键启动（推荐）
+### 🐳 Docker 启动（最简，推荐）
+
+无需本地安装 Python / Node / 数据库，一条命令拉起前后端：
+
+```bash
+cd techhub
+docker compose up -d --build
+```
+
+启动后：
+
+- 前端：http://localhost （默认 `80` 端口，可用 `FRONTEND_PORT` 覆盖）
+- 后端 API 文档：http://localhost:8080/docs
+- 数据库：默认 SQLite，持久化在 `techhub-data` 数据卷；上传文件持久化在 `techhub-uploads`
+
+**自定义配置**（可选，通过环境变量或根目录 `.env` 覆盖）：
+
+| 变量 | 默认值 | 说明 |
+| ---- | ---- | ---- |
+| `FRONTEND_PORT` | `80` | 前端对外端口 |
+| `DATABASE_URL` | `sqlite:////app/data/techhub.db` | 数据库连接串，可切换 MySQL/PostgreSQL |
+| `SECRET_KEY` | `techhub-dev-secret-key` | JWT 密钥（生产必改） |
+| `ENV` | `development` | `development` / `production` |
+| `CORS_ORIGINS` | `http://localhost,http://127.0.0.1` | 允许跨域来源 |
+
+> 首次启动自动执行数据库迁移，并在空库时生成演示数据（52 名学生、4 个班级等）。
+> **生产环境务必设置 `ENV=production` 与强随机 `SECRET_KEY`**，否则后端会拒绝启动。
+
+常用命令：
+
+```bash
+docker compose up -d --build   # 构建并后台启动
+docker compose logs -f backend # 查看后端日志
+docker compose down            # 停止（数据卷保留）
+docker compose down -v         # 停止并删除数据卷（清空数据）
+```
+
+### 🚀 一键启动（Linux 本机）
 
 项目根目录提供 `start.sh` 一键脚本，自动完成：**架构检测（x86_64 / arm64）→ 安装系统依赖 → 初始化 MySQL/MariaDB → 安装后端依赖（阿里云镜像）→ 安装前端依赖（npmmirror 镜像）→ 启动前后端服务**。
 
@@ -198,6 +243,9 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+
+# （可选）运行测试需额外安装开发依赖
+pip install -r requirements-dev.txt
 
 # 复制环境变量配置（可选，开发环境有默认值）
 cp .env.example .env

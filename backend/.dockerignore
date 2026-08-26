@@ -1,0 +1,16 @@
+# 忽略本地开发产物，避免打入镜像上下文
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+pytest-cache-files-*/
+tests/
+techhub.db
+*.db
+*.db-shm
+*.db-wal
+.env
+uploads/
+data/
+Dockerfile
+.dockerignore

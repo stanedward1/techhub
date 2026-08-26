@@ -1,0 +1,38 @@
+services:
+  backend:
+    build: ./backend
+    container_name: techhub-backend
+    restart: unless-stopped
+    environment:
+      # 数据库：默认 SQLite（持久化到数据卷），可改为 MySQL/PostgreSQL 连接串
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/techhub.db}
+      ENV: ${ENV:-development}
+      SECRET_KEY: ${SECRET_KEY:-techhub-dev-secret-key}
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-20971520}
+    volumes:
+      - techhub-data:/app/data
+      - techhub-uploads:/app/uploads
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    build: ./frontend
+    container_name: techhub-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+
+volumes:
+  techhub-data:
+  techhub-uploads:

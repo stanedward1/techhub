@@ -21,6 +21,7 @@ TechHub 是一套面向中职学校的「教学 + 班主任一体化工作平台
 | 后端框架 | FastAPI | 0.115 | 自动生成 OpenAPI 文档 |
 | ORM | SQLAlchemy | 2.0 | 声明式模型 |
 | 数据库 | SQLite | — | 单文件，可平滑切换 MySQL/PostgreSQL |
+| 迁移 | Alembic | 1.13 | schema 唯一来源，`upgrade head` 建表/加列 |
 | 认证 | python-jose + bcrypt | — | JWT（HS256）+ bcrypt 密码哈希 |
 | 前端框架 | Vue 3 | 3.4 | Composition API + `<script setup>` |
 | UI 库 | Element Plus | 2.7 | 后台与表单 |
@@ -29,6 +30,7 @@ TechHub 是一套面向中职学校的「教学 + 班主任一体化工作平台
 | Markdown | marked + DOMPurify | 12 | 作业正文/日志渲染 + XSS 防护 |
 | Excel | openpyxl | 3.1 | 导入/导出 |
 | 测试 | pytest | — | 后端自动化测试 |
+| 部署 | Docker + Nginx | — | 多阶段镜像 + 静态托管 + 反代 |
 
 ## 3. 目录结构
 
@@ -62,8 +64,12 @@ techhub/
 │   │   │   └── uploads.py     #   通用文件上传
 │   │   └── seed.py            # 假数据生成（Faker）
 │   ├── tests/                 # pytest 自动化测试
-│   ├── requirements.txt
-│   └── run.py                 # uvicorn 启动入口
+│   ├── requirements.txt       # 运行时依赖
+│   ├── requirements-dev.txt   # 开发/测试依赖
+│   ├── run.py                 # uvicorn 启动入口
+│   ├── Dockerfile             # 后端镜像
+│   ├── docker-entrypoint.py   # 容器入口（迁移 + 首次 seed + 启动）
+│   └── .env.example
 ├── frontend/
 │   ├── src/
 │   │   ├── api/               # axios 封装 + 各域 API 函数
@@ -74,8 +80,12 @@ techhub/
 │   │   ├── views/student/     # 学生端页面（8 个）
 │   │   └── views/admin/       # 管理端页面（22 个）
 │   ├── vite.config.js         # dev 代理 /api、/uploads → 8080
+│   ├── Dockerfile             # 前端镜像（Node 构建 + Nginx 托管）
+│   ├── nginx.conf             # Nginx 静态托管 + 反代后端
 │   └── package.json
-└── docs/                      # 本文档集
+├── docs/                      # 本文档集
+├── docker-compose.yml         # 一键编排后端 + 前端
+└── README.md
 ```
 
 ## 4. 权限模型
@@ -156,7 +166,19 @@ techhub/
 浏览器 → Vite(:5173) ──/api,/uploads──▶ FastAPI(:8080) ──▶ SQLite(techhub.db)
 ```
 
-### 生产环境（建议）
+### Docker 部署（推荐）
+```
+docker compose up -d --build
+浏览器 → Nginx(:80，frontend 容器)
+         ├── /            → 前端静态产物(dist/)
+         └── /api、/uploads → backend 容器(FastAPI :8080) ──▶ SQLite(数据卷) / MySQL
+```
+- `frontend` 容器：多阶段构建（Node 打包 → Nginx 托管），反代 `/api`、`/uploads` 到 `backend` 服务
+- `backend` 容器：`docker-entrypoint.py` 启动时先 `alembic upgrade head` 迁移，再按需 seed，最后起 uvicorn
+- SQLite 持久化在 `techhub-data` 卷，上传文件持久化在 `techhub-uploads` 卷
+- 切换 MySQL/PostgreSQL 只需改 `DATABASE_URL` 环境变量
+
+### 生产环境（裸机，可选）
 ```
 浏览器 → Nginx(:80)
          ├── /            → 前端静态产物(dist/)
@@ -168,10 +190,11 @@ techhub/
 
 ## 9. 数据库迁移策略
 
-- 启动时自动执行 `create_all`（新表）+ `run_migrations()`（增量字段/表）
-- 迁移逻辑在 `database.py` 中，通过 SQLAlchemy `inspect` 检查现有结构
-- 新增字段使用 `ALTER TABLE ADD COLUMN`，新表使用 `CREATE TABLE IF NOT EXISTS`
-- 生产环境建议引入 Alembic 做正式迁移管理
+- **Alembic 为 schema 唯一来源**：`alembic upgrade head` 一次性完成建表/加列/加索引
+- 本地启动 `main.py` 时会 `create_all`（兜底建表）+ `run_migrations()`（执行 `alembic upgrade head`）
+- Docker 启动由 `docker-entrypoint.py` 显式先跑 `alembic upgrade head`，再按需 seed
+- 模型变更必须配套新增 Alembic revision（`backend/alembic/versions/`），保证「迁移链 = 模型 schema」
+- 新增字段/表后，用 `alembic revision --autogenerate` 生成迁移脚本并人工核对
 
 ## 10. 关键设计决策（ADR 摘要）
 

@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
@@ -19,16 +19,3 @@ class PasswordRequest(BaseModel):
     old_password: str
     # 密码强度由 security.validate_password_strength 校验（至少8位+字母+数字）
     new_password: str = Field(..., min_length=1, max_length=50)
-
-
-class UserOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    username: str
-    name: str
-    role: str
-    avatar: Optional[str] = None
-    phone: Optional[str] = None
-    class_id: Optional[int] = None
-    class_name: Optional[str] = None
