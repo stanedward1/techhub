@@ -14,6 +14,7 @@ from app.models.workbench import (
     StudentProfileTag,
     WeeklyReport,
     StudentBoardHistory,
+    Attendance,
 )
 from app.models.classlog import (
     WorkLog,
@@ -50,6 +51,7 @@ __all__ = [
     "StudentProfileTag",
     "WeeklyReport",
     "StudentBoardHistory",
+    "Attendance",
     "WorkLog",
     "ClassPlan",
     "TeacherPlan",

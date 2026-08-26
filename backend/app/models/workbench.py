@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -165,3 +165,20 @@ class StudentBoardHistory(Base):
     new_type = Column(String(20), nullable=False)
     changed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Attendance(Base):
+    """学生每日考勤点名记录。"""
+
+    __tablename__ = "attendance"
+    __table_args__ = (
+        UniqueConstraint("class_id", "student_id", "date", name="uq_attendance_student_date"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer, ForeignKey("classrooms.id"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    date = Column(String(20), nullable=False, index=True)  # YYYY-MM-DD
+    status = Column(String(20), default="出勤")  # 出勤 / 缺勤 / 请假 / 迟到
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

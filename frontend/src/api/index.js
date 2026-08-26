@@ -87,6 +87,11 @@ export const leaveApi = {
   remove: (id) => request.delete(`/api/leaves/${id}`)
 }
 
+export const attendanceApi = {
+  list: (params) => request.get('/api/attendance', { params }),
+  checkin: (data) => request.post('/api/attendance/checkin', data)
+}
+
 export const pointApi = {
   list: (params) => request.get('/api/points', { params }),
   create: (data) => request.post('/api/points', data),

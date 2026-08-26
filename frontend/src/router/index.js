@@ -71,6 +71,27 @@ const routes = [
     ]
   },
 
+  // ============ 移动端（班主任/管理员） ============
+  {
+    path: '/m/login',
+    name: 'mobile-login',
+    component: () => import('../mobile/views/Login.vue')
+  },
+  {
+    path: '/m',
+    component: () => import('../mobile/layout/MobileLayout.vue'),
+    meta: { requiresTeacher: true },
+    children: [
+      { path: '', redirect: '/m/home' },
+      { path: 'home', name: 'm-home', component: () => import('../mobile/views/Home.vue') },
+      { path: 'students', name: 'm-students', component: () => import('../mobile/views/StudentList.vue') },
+      { path: 'students/:id', name: 'm-student-overview', component: () => import('../mobile/views/StudentOverview.vue') },
+      { path: 'checkin', name: 'm-checkin', component: () => import('../mobile/views/Checkin.vue') },
+      { path: 'record', name: 'm-record', component: () => import('../mobile/views/Record.vue') },
+      { path: 'leaves', name: 'm-leaves', component: () => import('../mobile/views/LeaveList.vue') }
+    ]
+  },
+
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 
@@ -81,23 +102,33 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const hasToken = !!getToken()
+  const isTeacherArea = to.path.startsWith('/admin') || to.path.startsWith('/m')
 
-  // 管理端访问控制
-  if (to.path.startsWith('/admin') && to.path !== '/admin/login') {
+  // 管理端 + 移动端访问控制（教师/管理员）
+  if (isTeacherArea && to.path !== '/admin/login' && to.path !== '/m/login') {
     if (!hasToken || !isTeacher()) {
-      return { path: '/admin/login', query: { redirect: to.fullPath } }
+      const loginPath = to.path.startsWith('/m') ? '/m/login' : '/admin/login'
+      return { path: loginPath, query: { redirect: to.fullPath } }
     }
     // 强制改密：未改密的用户只能访问改密页
     if (getUser()?.must_change_password && to.path !== '/admin/change-password') {
       return { path: '/admin/change-password', query: { first: 1 } }
     }
   }
+
   // 改密页已登录时不允许访问登录页
   if (to.path === '/admin/login' && hasToken && isTeacher()) {
     if (getUser()?.must_change_password) {
       return { path: '/admin/change-password', query: { first: 1 } }
     }
     return { path: '/admin' }
+  }
+  // 移动端登录页已登录时跳转移动端首页
+  if (to.path === '/m/login' && hasToken && isTeacher()) {
+    if (getUser()?.must_change_password) {
+      return { path: '/admin/change-password', query: { first: 1 } }
+    }
+    return { path: '/m/home' }
   }
 
   // 学生端访问控制
@@ -109,11 +140,11 @@ router.beforeEach((to) => {
   }
 
   // 已登录教师访问学生端时，跳转到后台
-  if (hasToken && isTeacher() && !to.path.startsWith('/admin')) {
+  if (hasToken && isTeacher() && !to.path.startsWith('/admin') && !to.path.startsWith('/m')) {
     return { path: '/admin' }
   }
-  // 已登录学生访问后台时，跳转到学生端
-  if (hasToken && isStudent() && to.path.startsWith('/admin')) {
+  // 已登录学生访问后台/移动端时，跳转到学生端
+  if (hasToken && isStudent() && (to.path.startsWith('/admin') || to.path.startsWith('/m'))) {
     return { path: '/' }
   }
 

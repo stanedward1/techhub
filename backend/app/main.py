@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import Base, engine, run_migrations
-from app.routers import admin, auth, classlog, homework, meta, students, uploads, workbench
+from app.routers import admin, attendance, auth, classlog, homework, meta, mobile, students, uploads, workbench
 
 # 基础日志配置
 logging.basicConfig(
@@ -52,6 +52,8 @@ app.include_router(auth.router)
 app.include_router(meta.router)
 app.include_router(homework.router)
 app.include_router(students.router)
+app.include_router(mobile.router)
+app.include_router(attendance.router)
 app.include_router(workbench.router)
 app.include_router(classlog.router)
 app.include_router(admin.router)
